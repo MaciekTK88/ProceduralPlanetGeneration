@@ -1,0 +1,38 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Procedural Planet Generation (PPG)",
+	"Description": "Plugin for creating procedural planets",
+	"Category": "Other",
+	"CreatedBy": "ChrumBum Studio",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "PPG",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+            "AdditionalDependencies": [
+              "VoxelCore"
+            ]
+		},
+        {
+          "Name": "ComputeShader",
+          "Type": "Runtime",
+          "LoadingPhase": "PostConfigInit"
+        }
+	],
+    "Plugins": [
+      {
+        "Name": "VoxelCore",
+        "Enabled": true
+      }
+    ]
+}

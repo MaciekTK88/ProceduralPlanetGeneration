@@ -1,0 +1,464 @@
+
+#ifndef NOISELIB_USF
+#define NOISELIB_USF
+
+#define PI 3.14159265359
+
+//------------------------------------------------------------------------------
+// 32‑bit finalizer from MurmurHash3 (strong bit‑avalanche)
+uint fmix32(uint h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
+// A robust 3D hash for ANY float3 (pos/neg/large/small)
+float Hash3D(float3 p)
+{
+    // reinterpret each float component as a 32‑bit uint
+    uint ux = asuint(p.x);
+    uint uy = asuint(p.y);
+    uint uz = asuint(p.z);
+
+    // mix the three axes with three distinct large primes
+    uint h = ux * 0x9e3779b1u
+           ^ uy * 0x85ebca6bu
+           ^ uz * 0xc2b2ae35u;
+
+    // apply a strong 32‑bit mixer
+    h = fmix32(h);
+
+    // normalize to [0,1], mapping 0…0xFFFFFFFF → 0.0…1.0
+    return float(h) / 4294967295.0;
+}
+
+//------------------------------------------------------------------------------
+// noised: Optimized noise with derivatives.
+// Returns float3: x = noise value, y = derivative in X, z = derivative in Y.
+float3 noised(float3 x)
+{
+    float3 p = floor(x);
+    float3 w = frac(x);
+    
+    float wx = w.x, wy = w.y, wz = w.z;
+    float wx2 = wx * wx, wy2 = wy * wy, wz2 = wz * wz;
+    float wx3 = wx2 * wx, wy3 = wy2 * wy, wz3 = wz2 * wz;
+    
+    float uX = wx3 * (6.0 * wx2 - 15.0 * wx + 10.0);
+    float uY = wy3 * (6.0 * wy2 - 15.0 * wy + 10.0);
+    float uZ = wz3 * (6.0 * wz2 - 15.0 * wz + 10.0);
+    
+    float duX = 30.0 * wx2 * (wx - 1.0) * (wx - 1.0);
+    float duY = 30.0 * wy2 * (wy - 1.0) * (wy - 1.0);
+    
+    float A = Hash3D(p + float3(0, 0, 0));
+    float B = Hash3D(p + float3(1, 0, 0));
+    float C = Hash3D(p + float3(0, 1, 0));
+    float D = Hash3D(p + float3(1, 1, 0));
+    float E = Hash3D(p + float3(0, 0, 1));
+    float F = Hash3D(p + float3(1, 0, 1));
+    float G = Hash3D(p + float3(0, 1, 1));
+    float H = Hash3D(p + float3(1, 1, 1));
+    
+    float k0 = A;
+    float k1 = B - A;
+    float k2 = C - A;
+    float k3 = E - A;
+    float k4 = A - B - C + D;
+    float k5 = A - C - E + G;
+    float k6 = A - B - E + F;
+    float k7 = -A + B + C - D + E - F - G + H;
+    
+    float noiseValue = -1.0 + 2.0 * (
+        k0 + k1 * uX + k2 * uY + k3 * uZ +
+        k4 * uX * uY + k5 * uY * uZ +
+        k6 * uZ * uX + k7 * uX * uY * uZ
+    );
+    
+    float noiseDerivX = 2.0 * duX * (k1 + k4 * uY + k6 * uZ + k7 * uY * uZ);
+    float noiseDerivY = 2.0 * duY * (k2 + k5 * uZ + k4 * uX + k7 * uZ * uX);
+    
+    return float3(noiseValue, noiseDerivX, noiseDerivY);
+}
+
+//------------------------------------------------------------------------------
+// fbmE: Fractal Brownian Motion with derivatives.
+float fbmE(float3 x, int octaves, float ridgePower)
+{
+    float initAmplitude = 0.7;
+    float amplitudeDecay = 0.55;
+    float frequencyMultiplier = 2.0;
+    float derivativeWeight = 1.0;
+    float ridgeOffset = 1.0;
+    float ridgeGain = 4.0;
+    
+    float total = 0.0;
+    float dX = 0.0, dY = 0.0;
+    float3 pos = x;
+    
+    for (int i = 0; i < octaves; ++i)
+    {
+        float3 n = noised(pos);
+        dX += n.y;
+        dY += n.z;
+        float dot_d = dX * dX + dY * dY;
+        // Compute the ridge value:
+        // Start with ridgeOffset - abs(n.x), clamp to 0, then raise to the ridgePower.
+        //float currentRidgeOffset = ridgeOffset * (1.0 + (float(i) / float(octaves)) * 0.5); // Example: slightly increase offset for higher octaves
+       // float currentRidgePower = ridgePower * (1.0 - (float(i) / float(octaves)) * 0.5); // Example: slightly decrease power (less sharp) for higher octaves
+
+        float ridge = ridgeOffset - abs(n.x);
+        //ridge = max(ridge, 0.0);
+        ridge = pow(ridge, ridgePower - 1.0); // Use currentRidgePower
+        ridge *= ridge;
+        total += initAmplitude * ridge / (1.0 + derivativeWeight * dot_d);
+        initAmplitude *= amplitudeDecay;
+        pos *= frequencyMultiplier;
+    }
+    return total;
+}
+
+//------------------------------------------------------------------------------
+// 2D "erosion" FBM + directional layers (adapted from Clay John's GLSL)
+//------------------------------------------------------------------------------
+
+// Gradient noise + analytic derivative
+// returns (value, dF/dx, dF/dy) in a float3: .x=val, .yz=derivatives
+float3 noised2D(float2 p)
+{
+    // Integer and fractional parts of the coordinate
+    float2 i = floor(p);
+    float2 w = frac(p);
+
+    // Quintic interpolation curve: 6w^5 - 15w^4 + 10w^3
+    float2 u = w * w * w * (w * (w * 6.0 - 15.0) + 10.0);
+    // Analytic derivative of the quintic curve: 30w^2(w-1)^2
+    float2 du = 30.0 * w * w * (w - 1.0) * (w - 1.0);
+
+    // Sample random values at the four corners of the grid cell
+    float a = Hash3D(float3(i + float2(0.0, 0.0), 0.0));
+    float b = Hash3D(float3(i + float2(1.0, 0.0), 0.0));
+    float c = Hash3D(float3(i + float2(0.0, 1.0), 0.0));
+    float d = Hash3D(float3(i + float2(1.0, 1.0), 0.0));
+
+    // Bilinear interpolation of the random values using the quintic curve
+    float value = lerp(lerp(a, b, u.x),
+                       lerp(c, d, u.x),
+                       u.y);
+
+    // Calculate derivatives using the chain rule
+    float2 derivatives;
+    derivatives.x = du.x * ( (b-a)*(1.0-u.y) + (d-c)*u.y );
+    derivatives.y = du.y * ( lerp(c,d,u.x) - lerp(a,b,u.x) );
+
+    // Return value mapped to [-1, 1] and the scaled derivative
+    return float3(-1.0 + 2.0 * value, 2.0 * derivatives);
+}
+
+// "Gavoronoise" directional erosion cell‐noise returning float3(x=height,yz=deriv)
+float3 erosion2d(float2 p, float2 dir)
+{
+    float3 sum = float3(0.0, 0.0, 0.0);
+    float wtot = 0.0;
+    const float F = 2.0 * 3.14159265;
+    
+    float2 ip = floor(p);
+    float2 fp = frac(p);
+    
+    for (int i = -2; i <= 1; i++)
+    for (int j = -2; j <= 1; j++)
+    {
+        float2 o = float2(i,j);
+        //float2 h = hash2d(ip - o) * 0.5;
+        float2 h = float2(Hash3D(float3(ip - o, 0.0)),
+                          Hash3D(float3(ip - o + float2(1.0, 10.0), 0.0))) * 0.5;
+        float2 pp = fp + o - h;
+        float  d  = dot(pp, pp);
+        float  w  = exp(-d*2.0);
+        wtot += w;
+        float  m  = dot(pp, dir);
+        sum += float3(cos(m*F), -sin(m*F)*(pp + dir)) * w;
+    }
+    return sum / wtot;
+}
+
+// Build an FBM terrain + 5 layers of "erosion"
+// returns float (height only, matching original GLSL usage)
+float mountain2d(float2 p, float scale, out float erosion)
+{
+    // 1) base FBM
+    float3 n = float3(0.0, 0.0, 0.0);
+    float freq = 1.0, amp = 0.8;
+    
+    for (int i = 0; i < 2; i++)
+    {
+        float3 d = noised2D(p * scale * freq);
+        n += d * (amp * float3(1.0, freq, freq));
+        amp  *= 0.5;
+        freq *= 2.0;
+    }
+    
+    // slope‐direction
+    float2 dir = n.zy * float2(1.0,-1.0);
+    
+    // 2) erosion layers
+    float3 hsum = float3(0.0, 0.0, 0.0); 
+    float  a    = 1.0;// * smoothstep(0.3, 0.5, n.x*0.5 + 0.5);
+    float  f    = 1.0;
+    
+    for (int i = 0; i < 8; i++)
+    {
+        float3 e = erosion2d(p * f * scale * 3, dir + hsum.zy * float2(1.0,-1.0));
+        hsum += e * (a * float3(1.0, f, f));
+        a   *= 0.4;
+        f   *= 2.0;
+    }
+    //smooth out erosion
+    hsum.x = smoothstep(-1.0, 1.0, hsum.x);
+    erosion = hsum.x;
+    //hsum *= 1 - n.x * n.x;
+    //hsum = 0;
+    // final height
+    float height = smoothstep(-1.0, 1.0, n.x) + hsum.x * 0.1;
+    return height;
+}
+
+//------------------------------------------------------------------------------
+// Triplanar‐blended height on a sphere
+//     Input:
+//       float3 N        – normalized 3D direction (e.g. world‐space sphere normal)
+//       float   scale   – noise UV scale (e.g. 4.0)
+//       float   density – noise "density" parameter (unused in this version)
+//     Output:
+//       float            – height in [0,1]
+//------------------------------------------------------------------------------
+float ErosionHeightTriplanar(float3 N, float scale, out float erosion)
+{
+    // blend weights from |Nx|,|Ny|,|Nz|
+    float3 w = abs(N);
+    w /= (w.x + w.y + w.z);
+
+    float erosionx = 0.0;
+    float erosiony = 0.0;
+    float erosionz = 0.0;
+    
+    // sample each plane
+    float hx = mountain2d(N.yz, scale, erosionx);
+    float hy = mountain2d(N.zx, scale, erosiony);
+    float hz = mountain2d(N.xy, scale, erosionz);
+
+    erosion = (erosionx * w.x + erosiony * w.y + erosionz * w.z);
+    
+    // triplanar blend
+    return hx*w.x + hy*w.y + hz*w.z;
+}
+
+
+//------------------------------------------------------------------------------
+// sphereToUV: Converts a normalized sphere position to UV coordinates.
+float2 sphereToUV(float3 pos)
+{
+    // Ensure pos is normalized
+    pos = normalize(pos);
+
+    // Latitude (V) is based on the vertical (Z) axis.
+    float v = asin(pos.z) / 3.14159265 + 0.5;
+
+    // Longitude (U) is based on the horizontal X and Y axes.
+    float u = atan2(pos.y, pos.x) / (2.0 * 3.14159265);
+    u = frac(u + 1.0); // Ensure U is in range [0,1]
+
+    return float2(u, v);
+}
+
+
+//------------------------------------------------------------------------------
+// warpPosition: Applies an additional warp to the sphere coordinate for variation.
+float3 warpPosition(float3 sphereDir, float warpStrength)
+{
+    float3 warp = float3(
+        fbmE(sphereDir * 10.0 + float3(37.1,61.7,12.3), 3, 2),
+        fbmE(sphereDir * 10.0 + float3(12.9,53.3,78.1), 3, 2),
+        fbmE(sphereDir * 10.0 + float3(21.4,88.9,45.6), 3, 2)
+    );
+    sphereDir += normalize(warp) * warpStrength;
+    return normalize(sphereDir);
+}
+
+// --- Revised Tectonic Effect Function ---
+float computeInstantPlateEffect(float3 pos, float PlateSizeFactor)
+{
+    float plateFrequency = 8.0 * PlateSizeFactor;
+    float3 p = pos * plateFrequency;
+    int3 ip = (int3)floor(p);
+    float radius = length(pos);
+
+    // --- Drift calculation ---
+    float totalW = 0.0;
+    float3 driftSum = float3(0,0,0);
+    float3 drifts[27];
+    float ws[27];
+    int idx = 0;
+
+    for (int i = -1; i <= 1; ++i)
+        for (int j = -1; j <= 1; ++j)
+            for (int k = -1; k <= 1; ++k)
+            {
+                int3 cell = ip + int3(i,j,k);
+                float3 randOff = float3(
+                    Hash3D(cell + float3(1,0,0)),
+                    Hash3D(cell + float3(0,1,0)),
+                    Hash3D(cell + float3(0,0,1))
+                );
+                float3 seedP = (float3)cell + randOff;
+                float3 cellOS = pos + (seedP - p + 0.5) / plateFrequency;
+                float3 cellNorm = normalize(cellOS);
+                float3 dvec = p - seedP;
+                float d = length(dvec);
+
+                float latCos = sqrt(saturate(1 - pow(cellNorm.z, 2)));
+                float w = exp(-d*d * 5.0) * latCos;
+
+                float3 nrmCan = normalize((float3)cell + randOff) * plateFrequency;
+                float3 dr = normalize(float3(
+                    Hash3D(nrmCan + float3(10,0,0)),
+                    Hash3D(nrmCan + float3(20,0,0)),
+                    Hash3D(nrmCan + float3(30,0,0))
+                ) - 0.5);
+
+                driftSum += dr * w;
+                totalW += w;
+
+                drifts[idx] = dr;
+                ws[idx++] = w;
+            }
+
+    if (totalW < 1e-5)
+        return 0.0;
+
+    float3 avgDr = driftSum / totalW;
+    float dev = 0.0;
+    for (int i = 0; i < idx; ++i)
+        dev += ws[i] * length(drifts[i] - avgDr);
+
+    float dispersion = dev / totalW;
+    float effect = (dispersion - 0.5) * 3.0 * 0.04;
+
+    return effect;
+}
+
+
+// Voronoi function
+float voronoi(float3 p, out float3 cellOrigin)
+{
+    float3 ip = floor(p);
+    float3 fp = frac(p);
+    float2 r = float2(2.0, 2.0);
+
+    float3 bestCell = 0.0;
+
+    for (int i = -1; i <= 1; ++i) // changed to -1..1 for proper neighborhood search
+    {
+        for (int j = -1; j <= 1; ++j)
+        {
+            for (int k = -1; k <= 1; ++k)
+            {
+                float3 g = float3(i, j, k);
+                float3 offset = Hash3D(ip + g) * 0.3;
+                float3 candidatePos = g + offset; // local position inside cube
+                float3 diff = fp - candidatePos;  // vector from p to feature point
+                float d = dot(diff, diff);
+
+                if (d < r.x)
+                {
+                    r.y = r.x;
+                    r.x = d;
+                    bestCell = ip + g + offset; // store world-space cell origin
+                }
+                else if (d < r.y)
+                {
+                    r.y = d;
+                }
+            }
+        }
+    }
+
+    cellOrigin = bestCell;
+    return r.x; // squared distance to closest point
+}
+
+// Craters function
+float CratersScaled(float3 p, float scale)
+{
+    float3 cellOrigin;
+    
+    float v = voronoi(p, cellOrigin);
+
+    //if (Hash3D(cellOrigin + float3(10,0,0)) > 0.5) // 50% chance to skip crater
+    //    return 0.15;
+    
+    // Base crater depression
+    float base = -sin(sqrt(v) * PI * 2.0) * exp(-4.0 * v);
+
+    // Rim parameters scale with crater size
+    float rimPos    = 0.25;               // Position of rim
+    float rimWidth  = 0.1 / scale;       // Thicker for large craters
+    float rimHeight = 0.25 * (1.0 / scale); // Taller for large craters
+
+    // Gaussian-like rim bump
+    float rim = rimHeight * exp(-pow((v - rimPos) / rimWidth, 2.0));
+
+    return base + rim;
+}
+
+// Multi-octave craters with proportional rims
+float fbmCraters(float3 p)
+{
+    float f = 3.2;  // frequency
+    float r = 0.0;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        r += CratersScaled(p * f, f) / (f * 0.5);
+        f *= 2.7;
+    }
+
+    return r / 2.0;
+}
+
+float2 Voronoi3D(float3 x, float time)
+{
+    float3 n = floor(x);
+    float3 f = frac(x);
+
+    float4 m = float4(8.0, 0.0, 0.0, 0.0); // distance, o.x, o.y, o.z
+
+    [unroll]
+    for (int k = -1; k <= 1; ++k)
+    {
+        [unroll]
+        for (int j = -1; j <= 1; ++j)
+        {
+            [unroll]
+            for (int i = -1; i <= 1; ++i)
+            {
+                float3 g = float3(i, j, k);
+                float3 o = Hash3D(n + g);
+                float3 r = g + (0.5 + 0.5 * sin(float3(time, time, time) + 6.2831 * o)) - f;
+                float d = dot(r, r);
+
+                if (d < m.x)
+                {
+                    m = float4(d, o);
+                }
+            }
+        }
+    }
+
+    return float2(m.x, m.y + m.z + m.w);
+}
+
+#endif
