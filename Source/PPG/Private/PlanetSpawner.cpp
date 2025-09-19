@@ -92,6 +92,35 @@ void APlanetSpawner::OnPreBeginPIE(const bool bIsSimulating)
 		Chunk->SelfDestruct();
 	}
 	Chunks.Empty();
+
+	//Destroy Water Chunks
+	for (auto& Elem : WaterChunkTransforms)
+	{
+		if (Elem.Value != nullptr)
+		{
+			Elem.Value->UnregisterComponent();
+			Elem.Value->DestroyComponent();
+		}
+	}
+	WaterChunkTransforms.Empty();
+
+	//Destroy foliage
+	if (FoliageActor != nullptr)
+	{
+		//Destroy InstancedStaticMeshComponents
+		TArray<UInstancedStaticMeshComponent*> ISMCs;
+		FoliageActor->GetComponents<UInstancedStaticMeshComponent>(ISMCs);
+		for (UInstancedStaticMeshComponent* ISMC : ISMCs)
+		{
+			ISMC->UnregisterComponent();
+			ISMC->DestroyComponent();
+		}
+		ISMCs.Empty();
+		//Destroy the actor
+		FoliageActor->Destroy();
+	}
+	FoliageActor = nullptr;
+	
 	DestroyChunkTrees();
 }
 
@@ -180,7 +209,7 @@ void APlanetSpawner::Tick(float DeltaTime)
 
 					// Compute the quaternion that rotates from the face's default forward to the input direction.
 					FQuat FaceRotation = FQuat::FindBetweenNormals(FaceDefaultForward, InputDir);
-					AddWaterChunk(ChunksToFinish[x], FTransform(FaceRotation, ChunksToFinish[x]->ChunkLocation, FVector(ChunksToFinish[x]->ChunkSize / 10000, ChunksToFinish[x]->ChunkSize / 10000, ChunksToFinish[x]->ChunkSize / 10000)), ChunksToFinish[x]->PlanetSpaceLocation, ChunksToFinish[x]->recursionLevel, ChunksToFinish[x]->PlanetSpaceLocation - ChunksToFinish[x]->ChunkLocation);
+					AddWaterChunk(ChunksToFinish[x], FTransform(FaceRotation, ChunksToFinish[x]->ChunkLocation, FVector(ChunksToFinish[x]->ChunkSize / 100000, ChunksToFinish[x]->ChunkSize / 100000, ChunksToFinish[x]->ChunkSize / 100000)), ChunksToFinish[x]->PlanetSpaceLocation, ChunksToFinish[x]->recursionLevel, ChunksToFinish[x]->PlanetSpaceLocation - ChunksToFinish[x]->ChunkLocation);
 				}
 				ChunksToFinish[x]->ready = true;
 				
@@ -630,26 +659,29 @@ void APlanetSpawner::AddWaterChunk(UChunkComponent* Chunk, FTransform WaterTrans
 		
 		if (RecursionLevel != PlanetData->maxRecursionLevel)
         {
-            //WaterMeshInst->AddInstance(WaterTransform, false);
-			WaterMesh->SetStaticMesh(WaterMeshToSpawn);
+			WaterMesh->SetStaticMesh(FarWaterMesh);
         }
         else
         {
-            //CloseWaterMeshInst->AddInstance(WaterTransform, false);
-        	WaterMesh->SetStaticMesh(CloseWaterMeshToSpawn);
+        	WaterMesh->SetStaticMesh(CloseWaterMesh);
         }
 
-		if (RecursionLevel < PlanetData->maxRecursionLevel - 3)
+		if (RecursionLevel >= PlanetData->RecursionLevelForMaterialChange)
 		{
-			WaterMesh->SetMaterial(0, FarWaterMaterial);
+			WaterMesh->SetMaterial(0, PlanetData->CloseWaterMaterial);
+		}
+		else
+		{
+			WaterMesh->SetMaterial(0, PlanetData->FarWaterMaterial);
 		}
 
 		UMaterialInstanceDynamic* MaterialInst = WaterMesh->CreateDynamicMaterialInstance(0, WaterMesh->GetMaterial(0));
 		MaterialInst->SetTextureParameterValue("HeightMap", Chunk->RenderTarget);
+		MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
 		MaterialInst->SetVectorParameterValue("PositionOffset", UKismetMathLibrary::InverseTransformLocation(WaterTransform, ChunkPositionOffset));
 		//WaterMesh->SetMaterial(0, MaterialInst);
 		WaterMesh->RegisterComponent();
-		this->AddInstanceComponent(WaterMesh);
+		//this->AddInstanceComponent(WaterMesh);
 
 		WaterChunkTransforms.Add(Chunk, WaterMesh);
 	}

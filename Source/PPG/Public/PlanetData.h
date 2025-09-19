@@ -90,23 +90,32 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	UTexture2D* CurveAtlas;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ChunkSetup")
-	bool GenerateWater = false;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	float noiseHeight = 400000.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	float PlanetRadius = 2500000.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	int maxRecursionLevel = 10;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	int minRecursionLevel = 0;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	UMaterialInterface* PlanetMaterial;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
+	bool GenerateWater = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
+	UMaterialInterface* CloseWaterMaterial;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
+	UMaterialInterface* FarWaterMaterial;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
+	int RecursionLevelForMaterialChange = 3;
 
 	
 

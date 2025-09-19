@@ -182,13 +182,10 @@ public:
 	FVector planetCenterWS;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Water")
-	UStaticMesh* WaterMeshToSpawn;
+	UStaticMesh* FarWaterMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Water")
-	UMaterialInterface* FarWaterMaterial;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Water")
-	UStaticMesh* CloseWaterMeshToSpawn;
+	UStaticMesh* CloseWaterMesh;
 
 	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	//TArray<UChunkComponent*> ChunksToUpload;
