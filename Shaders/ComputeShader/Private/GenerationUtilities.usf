@@ -1,0 +1,377 @@
+
+#ifndef GENERATIONUTILITIES_USF
+#define GENERATIONUTILITIES_USF
+
+#include "NoiseLib.usf"
+
+//input and output buffers
+Buffer<float3> Input;
+RWTexture2D<float4> BiomeMap;
+Texture2D<float4> CurveAtlas;
+Texture2D<float> BiomeDataTexture;
+RWBuffer<float> Output;
+RWBuffer<uint> OutputVC;
+uint biomeCount;
+int chunkQuality;
+float3 chunkLocation;
+int3 chunkRotation;
+float3 chunkOriginLocation;
+float   chunkSize;
+float   planetRadius;
+float   noiseHeight;
+
+
+struct TerrainData
+{
+    float erosion;
+    float finalElevation;
+    uint forestNoise;
+    int biomeIndex;
+    uint3 top3BiomeIndices;
+    float3 top3BiomeStrengths;
+};
+
+
+
+float3 TransformLocation(float3 transformPos, int3 transformRotDeg, float3 localLocation)
+{
+    int3 rotation = transformRotDeg;
+    if (rotation.x == 0 && rotation.y == -1 && rotation.z == 0)
+        return float3(localLocation.x, 0, localLocation.y) + transformPos;
+    if (rotation.x == 0 && rotation.y == 1 && rotation.z == 0)
+        return float3(localLocation.x, 0, -localLocation.y) + transformPos;
+    if (rotation.x == -1 && rotation.y == 0 && rotation.z == 0)
+        return float3(0, localLocation.y, localLocation.x) + transformPos;
+    if (rotation.x == 0 && rotation.y == 0 && rotation.z == 1)
+        return float3(localLocation.x, localLocation.y, 0) + transformPos;
+    if (rotation.x == 0 && rotation.y == 0 && rotation.z == -1)
+        return float3(-localLocation.x, localLocation.y, 0) + transformPos;
+    if (rotation.x == 1 && rotation.y == 0 && rotation.z == 0)
+        return float3(0, localLocation.y, -localLocation.x) + transformPos;
+    return localLocation + transformPos;
+}
+
+float3 GetVertexPosition(uint2 DispatchThreadID)
+{
+    float Size = (chunkSize / chunkQuality);
+    
+    uint x = DispatchThreadID.x;
+    uint y = DispatchThreadID.y;
+
+    //transfer chunkLocation to -1, 1 range
+    float originalchunkSize = planetRadius * 2.0 / sqrt(2.0);
+    
+    float localX = x * Size / (originalchunkSize / 2);
+    float localY = y * Size / (originalchunkSize / 2);
+    float3 localPos = float3(localX, localY, 0.0);
+    
+    float3 LocalchunkLocation = chunkLocation / (originalchunkSize / 2.0);
+    
+    float3 planetPos = TransformLocation(LocalchunkLocation, chunkRotation, localPos);
+
+    // Apply deformation
+    float Deformation = 0.75;
+    planetPos.x = tan(planetPos.x * PI * Deformation / 4.0);
+    planetPos.y = tan(planetPos.y * PI * Deformation / 4.0);
+    planetPos.z = tan(planetPos.z * PI * Deformation / 4.0);
+
+    return planetPos;
+}
+
+
+float evaluateTemperature(float3 pos, float temperatureNoiseScale)
+{
+    float3 normalizedPos = normalize(pos);
+    float latTemp = 1.0f - abs(normalizedPos.z);
+    // Assume higher baseElevation (land) is colder; underwater remains moderate.
+    //float elevEffect = 0.0;//(baseElevation > 0.0) ? (saturate(baseElevation * 2 - 0.5)) : 1.0;
+    return saturate(latTemp + ((fbmE(pos * temperatureNoiseScale, 2, 1) - 0.5) * 2) * 0.05);
+}
+
+float readCurveR(int row, float x)
+{
+    float texWidth = 256.0;
+
+    // Clamp x inside [0, 1]
+    x = saturate(x / 2.0 + 0.5);
+
+    // Scale to texel space
+    float texCoordX = x * (texWidth - 1.0);
+
+    float baseX = floor(texCoordX);
+    float nextX = baseX + 1.0;
+
+    float fracX = texCoordX - baseX;
+
+    // Correct last pixel handling
+    bool isLastPixel = baseX >= (texWidth - 1.0);
+    if (isLastPixel)
+    {
+        nextX = baseX;
+        fracX = 0.0;
+    }
+
+    int2 baseCoord = int2(int(baseX), row);
+    int2 nextCoord = int2(int(min(nextX, texWidth - 1.0)), row);
+
+    // Read raw values
+    float valueA = CurveAtlas[baseCoord].x;
+    float valueB = CurveAtlas[nextCoord].x;
+
+    // Interpolate
+    float value = lerp(valueA, valueB, fracX);
+
+    // Decode to [-1, 1] range
+    value = (value - 0.5) * 2.0;
+
+    return value;
+}
+
+
+
+
+float readCurveG(int row, float x)
+{
+    float texWidth = 256.0;
+
+    // Clamp x inside [0, 1]
+    x = saturate(x / 2.0 + 0.5);
+
+    // Scale to texel space
+    float texCoordX = x * (texWidth - 1.0);
+
+    float baseX = floor(texCoordX);
+    float nextX = baseX + 1.0;
+
+    float fracX = texCoordX - baseX;
+
+    // Correct last pixel handling
+    bool isLastPixel = baseX >= (texWidth - 1.0);
+    if (isLastPixel)
+    {
+        nextX = baseX;
+        fracX = 0.0;
+    }
+
+    int2 baseCoord = int2(int(baseX), row);
+    int2 nextCoord = int2(int(min(nextX, texWidth - 1.0)), row);
+
+    // Read raw values
+    float valueA = CurveAtlas[baseCoord].y;
+    float valueB = CurveAtlas[nextCoord].y;
+
+    // Interpolate
+    float value = lerp(valueA, valueB, fracX);
+
+    // Decode to [-1, 1] range
+    value = (value - 0.5) * 2.0;
+
+    return value;
+}
+
+float readCurveB(int row, float x)
+{
+    float texWidth = 256.0;
+
+    // Clamp x inside [0, 1]
+    x = saturate(x / 2.0 + 0.5);
+
+    // Scale to texel space
+    float texCoordX = x * (texWidth - 1.0);
+
+    float baseX = floor(texCoordX);
+    float nextX = baseX + 1.0;
+
+    float fracX = texCoordX - baseX;
+
+    // Correct last pixel handling
+    bool isLastPixel = baseX >= (texWidth - 1.0);
+    if (isLastPixel)
+    {
+        nextX = baseX;
+        fracX = 0.0;
+    }
+
+    int2 baseCoord = int2(int(baseX), row);
+    int2 nextCoord = int2(int(min(nextX, texWidth - 1.0)), row);
+
+    // Read raw values
+    float valueA = CurveAtlas[baseCoord].z;
+    float valueB = CurveAtlas[nextCoord].z;
+
+    // Interpolate
+    float value = lerp(valueA, valueB, fracX);
+
+    // Decode to [-1, 1] range
+    value = (value - 0.5) * 2.0;
+
+    return value;
+}
+
+//parameter 0 = minTemp parameter 1 = maxTemp parameter 2 = curveIndex parameter 3 = isforestbiome parameter 4 = MaterialLayerIndex
+float ReadBiomeDataTexture(uint biomeindex, uint parameter)
+{
+    return BiomeDataTexture[uint2(parameter, biomeindex)];
+}
+
+
+// Helper function to handle inclusive/exclusive range logic
+bool InTempRange(float t, float mn, float mx)
+{
+    if (mx >= 1.0f - 1e-6)    // if this biome truly goes to the top
+        return t >= mn && t <= mx;
+    else
+        return t >= mn && t <  mx;
+}
+
+float3 sampleBlendedCurve(
+    float3 pos,
+    float x,
+    float y,
+    float z,
+    float temperatureNoiseScale,
+    float BiomeBlendNoiseScale,
+    out uint dominantBiomeIndex,
+    out uint3 top3BiomeIndices,
+    out float3 top3BiomeStrengths
+)
+{
+    static const uint MAX_BIOMES_STATIC = 16; 
+
+    float temperature = evaluateTemperature(pos, temperatureNoiseScale);
+
+    float weights[MAX_BIOMES_STATIC]; 
+    float totalWeight = 0.0;  // This will be original sum (unused after sharpening)
+
+    uint actualLoopCount = min(biomeCount, MAX_BIOMES_STATIC);
+
+    for (uint i = 0; i < actualLoopCount; ++i)
+    {
+        float minT = (ReadBiomeDataTexture(i, 0));
+        float maxT = (ReadBiomeDataTexture(i, 1));
+
+        if (maxT > 0.99)
+        {
+            maxT = 1.0 + maxT;
+        }
+        if (minT < 0.001)
+        {
+            minT = -maxT;
+        }
+
+        float halfRange = (maxT - minT) * 0.5;
+        float center = minT + halfRange;
+
+        float tempWeight = pow(saturate(1.0 - abs(temperature - center) / halfRange), 1.5);
+        
+        float bias = pow(fbmE(pos * BiomeBlendNoiseScale + float3(i, i + 1, i + 2), 2, 2.0), 2) + 0.001; // add small value to avoid zero bias
+        float w = tempWeight * bias;
+        totalWeight += w;
+        weights[i] = w;
+        
+    }
+
+    // NEW: Apply sharpening to weights (moved here so top-3 uses sharpened values)
+    float sharpness = 4.0; // Tune this value (e.g., 4.0-10.0) for desired transition sharpness
+    float sharpenedTotal = 0.0;
+    for (uint i = 0; i < actualLoopCount; ++i)
+    {
+        weights[i] = pow(max(weights[i], 0.0), sharpness); // Sharpen: raise to power
+        sharpenedTotal += weights[i];
+    }
+
+    // Find top 3 biome indices (now using sharpened weights)
+    uint topIdx[3] = {0, 0, 0};
+    float topW[3]  = {-1.0, -1.0, -1.0};
+
+    float3 result = float3(0, 0, 0);
+    dominantBiomeIndex = 0;
+
+    for (uint i = 0; i < actualLoopCount; ++i)
+    {
+        float w = weights[i];
+        if (w > 0.0)
+        {
+            if (w > topW[0])
+            {
+                topW[2] = topW[1]; topIdx[2] = topIdx[1];
+                topW[1] = topW[0]; topIdx[1] = topIdx[0];
+                topW[0] = w;       topIdx[0] = i;
+            }
+            else if (w > topW[1])
+            {
+                topW[2] = topW[1]; topIdx[2] = topIdx[1];
+                topW[1] = w;       topIdx[1] = i;
+            }
+            else if (w > topW[2])
+            {
+                topW[2] = w;       topIdx[2] = i;
+            }
+        }
+    }
+
+    uint finalIdx1 = topIdx[0];
+    uint finalIdx2 = (topW[1] >= 0.0) ? topIdx[1] : finalIdx1;
+    uint finalIdx3 = (topW[2] >= 0.0) ? topIdx[2] : finalIdx2;
+
+    top3BiomeIndices = uint3(finalIdx1, finalIdx2, finalIdx3);
+    dominantBiomeIndex = finalIdx1;
+
+    // Normalize top3 weights to [0,1]
+    float normSum = max(topW[0], 0.0) + max(topW[1], 0.0) + max(topW[2], 0.0);
+    //normSum = max(normSum, 0.0000000001); // Avoid div-by-zero if all zero
+    top3BiomeStrengths = float3(
+        max(topW[0], 0.0) / normSum,
+        max(topW[1], 0.0) / normSum,
+        max(topW[2], 0.0) / normSum
+    );
+
+    // Blend result using sharpened normalized weights
+    for (uint i = 0; i < actualLoopCount; ++i)
+    {
+        if (weights[i] > 0.0)
+        {
+            float normW = weights[i] / sharpenedTotal; // Use sharpened total for normalization
+            
+            float rawCurveIndex = ReadBiomeDataTexture(i, 2) + 0.1;
+            uint curveIndex = uint(clamp(rawCurveIndex, 0.0, 255.0));
+
+            result += normW * float3(
+                readCurveR(curveIndex, x),
+                readCurveG(curveIndex, y),
+                readCurveB(curveIndex, z)
+            );
+        }
+    }
+
+    return result;
+}
+
+
+void WritePlanetData(
+    uint2 DispatchThreadID,
+    float3 normalizedPlanetPos,
+    TerrainData terrainData
+)
+{
+    int verticesAmount = chunkQuality + 1;
+    
+    uint3 top3MaterialLayerIndices = uint3(ReadBiomeDataTexture(terrainData.top3BiomeIndices.x, 4), ReadBiomeDataTexture(terrainData.top3BiomeIndices.y, 4), ReadBiomeDataTexture(terrainData.top3BiomeIndices.z, 4));
+    BiomeMap[DispatchThreadID.xy] = float4(float3(float(top3MaterialLayerIndices.x) / 255.0, float(top3MaterialLayerIndices.y) / 255.0, float(top3MaterialLayerIndices.z) / 255.0), (clamp(terrainData.finalElevation, -1, 0) + 1));
+    BiomeMap[DispatchThreadID.xy + int2(0, verticesAmount)] = float4(terrainData.top3BiomeStrengths, 1.0);
+
+    uint index = (DispatchThreadID.y * verticesAmount + DispatchThreadID.x) * 3;
+    float3 planetPos = normalizedPlanetPos * (planetRadius + terrainData.finalElevation * noiseHeight);
+    planetPos = planetPos - (chunkOriginLocation - chunkLocation);
+    float3 chunkLocalPos = planetPos - chunkLocation;
+    Output[index]     = chunkLocalPos.x;
+    Output[index + 1] = chunkLocalPos.y;
+    Output[index + 2] = chunkLocalPos.z;
+    OutputVC[index] = uint(terrainData.erosion * 255);
+    OutputVC[index + 1] = terrainData.forestNoise;
+    OutputVC[index + 2] = uint(terrainData.biomeIndex);
+}
+
+
+
+#endif

@@ -94,12 +94,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Foliage")
 	AActor* getFoliageActor();
 
-	UFUNCTION(BlueprintCallable, Category = "Water")
-	void AddWaterChunk(UChunkComponent* Chunk, FTransform WaterTransform, FVector OriginalLocation, int RecursionLevel, FVector ChunkPositionOffset);
-
-	UFUNCTION(BlueprintCallable, Category = "Water")
-	void RemoveWaterChunk(UChunkComponent* Chunk);
-
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadWrite)
 	UInstancedStaticMeshComponent* WaterMeshInst;
 
@@ -170,6 +164,9 @@ public:
 	bool GenerateRayTracingProxy = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
+	bool AsyncInitBody = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	float GlobalFoliageDensityScale = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
@@ -202,11 +199,11 @@ public:
 	UPROPERTY()
 	TArray<uint32> Triangles;
 
-	UPROPERTY()
-	TMap<UChunkComponent*, UStaticMeshComponent*> WaterChunkTransforms;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	bool ready = false;
+
+	UPROPERTY()
+	uint8 MaterialLayersNum = 0;
 
 
 	FVector WorldLocation;

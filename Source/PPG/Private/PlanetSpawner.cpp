@@ -27,11 +27,6 @@ void APlanetSpawner::BeginPlay()
 {
 	SetActorTickEnabled(true);
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	FoliageActor = GetWorld()->SpawnActor<AFoliageSpawner>(AFoliageSpawner::StaticClass(), GetActorLocation(), FRotator(0.0f, 0.0f, 0.0f), SpawnParams);
-	FoliageActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
-
 	if (Character == nullptr)
 	{
 		if (UGameplayStatics::GetPlayerCharacter(GetWorld(), 0) != nullptr)
@@ -93,17 +88,6 @@ void APlanetSpawner::OnPreBeginPIE(const bool bIsSimulating)
 	}
 	Chunks.Empty();
 
-	//Destroy Water Chunks
-	for (auto& Elem : WaterChunkTransforms)
-	{
-		if (Elem.Value != nullptr)
-		{
-			Elem.Value->UnregisterComponent();
-			Elem.Value->DestroyComponent();
-		}
-	}
-	WaterChunkTransforms.Empty();
-
 	//Destroy foliage
 	if (FoliageActor != nullptr)
 	{
@@ -144,16 +128,11 @@ void APlanetSpawner::Tick(float DeltaTime)
 		
 		for (int x = ChunksToFinish.Num() - 1; x >= 0; x--)
 		{
-			//int x = ChunksToFinish.Num() - 1;
-			//print on screen
-			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red, FString::Printf(TEXT("ChunksToFinish = %d"), ChunksToFinish.Num()));
 
-			//if (ChunksToFinish[x]->AbortAsync == false)
-			//{
-				//ChunksToFinish[x]->SpawnMesh();
-				//ChunksToFinish[x]->ReadyToRemove = true;
-			//}
-
+			if (ChunksToFinish[x]->IsAsyncPhysicsStateCreated() == false && ChunksToFinish[x]->GenerateCollisions == true && ChunksToFinish[x]->AbortAsync == false && AsyncInitBody == true)
+			{
+				continue;
+			}
 			
 			if (ChunksToFinish[x]->ParentChunk == nullptr)
 			{
@@ -197,20 +176,7 @@ void APlanetSpawner::Tick(float DeltaTime)
 					ChunkSpawned++;
 					//GeneratedChunks.Add(ChunksToFinish[x]);
 				}
-			
-				if (ChunksToFinish[x]->ChunkMinHeight < 0 && PlanetData->GenerateWater && ChunksToFinish[x]->AbortAsync == false)
-				{
-					// For a given face, define its local "no rotation" forward.
-					FVector FaceDefaultForward = FVector(0, 0, 1);
-
-					// Get the desired direction for the chunk's edge on that face.
-					FVector InputDir = FVector(ChunksToFinish[x]->PlanetSpaceRotation);
-					InputDir = InputDir.GetSafeNormal();
-
-					// Compute the quaternion that rotates from the face's default forward to the input direction.
-					FQuat FaceRotation = FQuat::FindBetweenNormals(FaceDefaultForward, InputDir);
-					AddWaterChunk(ChunksToFinish[x], FTransform(FaceRotation, ChunksToFinish[x]->ChunkLocation, FVector(ChunksToFinish[x]->ChunkSize / 100000, ChunksToFinish[x]->ChunkSize / 100000, ChunksToFinish[x]->ChunkSize / 100000)), ChunksToFinish[x]->PlanetSpaceLocation, ChunksToFinish[x]->recursionLevel, ChunksToFinish[x]->PlanetSpaceLocation - ChunksToFinish[x]->ChunkLocation);
-				}
+				
 				ChunksToFinish[x]->ready = true;
 				
 				ChunksToFinish.RemoveAt(x);
@@ -248,19 +214,21 @@ void APlanetSpawner::Tick(float DeltaTime)
 
 	if (ChunksToRemove.Num() > 0)
 	{
+		int MaxToRemove = 40;
 		for (int i = ChunksToRemove.Num() - 1; i >= 0; i--)
 		{
 			//print on screen
-			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red, FString::Printf(TEXT("ChunksToRemove = %d"), ChunksToRemove.Num()));
+			//GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red, FString::Printf(TEXT("ChunksToRemove = %d"), ChunksToRemove.Num()));
 			
 			if (ChunksToRemove[i]->ReadyToRemove == true)
 			{
-				if (PlanetData->GenerateWater)
-				{
-					RemoveWaterChunk(ChunksToRemove[i]);
-				}
 				ChunksToRemove[i]->SelfDestruct();
 				ChunksToRemove.RemoveAt(i);
+				MaxToRemove--;
+			}
+			if (MaxToRemove <= 0)
+			{
+				break;
 			}
 		}
 	}
@@ -299,6 +267,18 @@ bool APlanetSpawner::SafetyCheck()
 	{
 		//print error on screen
 		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("No Curve Atlas in Planet Data! Please assign a Curve Atlas texture.")));
+		return false;
+	}
+	else if (AsyncInitBody == true && IConsoleManager::Get().FindConsoleVariable(TEXT("p.Chaos.EnableAsyncInitBody"))->GetBool() == false)
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("AsyncInitBody is enabled but Chaos AsyncInitBody is disabled! Please add '[ConsoleVariables] p.Chaos.EnableAsyncInitBody = true' to DefaultEngine.ini or disable AsyncInitBody in Planet Spawner.")));
+		return false;
+	}
+	else if (AsyncInitBody == false && IConsoleManager::Get().FindConsoleVariable(TEXT("p.Chaos.EnableAsyncInitBody"))->GetBool() == true)
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("AsyncInitBody is disabled but Chaos AsyncInitBody is enabled! Please set '[ConsoleVariables] p.Chaos.EnableAsyncInitBody = false' in DefaultEngine.ini or enable AsyncInitBody in Planet Spawner.")));
 		return false;
 	}
 	else
@@ -363,7 +343,17 @@ void FChunkTree::GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FV
 	{
 		working = true;
 		FVector planetSpaceVertex = planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(LocalChunkSize / 2, LocalChunkSize / 2, 0.0f));
-		//FVector planetSpaceVertex = worldSpaceVertex - planet->planetCenterWS;
+
+		//transform planetSpaceVertex to -1, 1 range
+		float OriginalChunkSize = planet->PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
+		planetSpaceVertex = planetSpaceVertex / (OriginalChunkSize / 2.0f);
+
+		//apply deformation
+		float deformation = 0.75;
+		planetSpaceVertex.X = tan(planetSpaceVertex.X * PI * deformation / 4.0);
+		planetSpaceVertex.Y = tan(planetSpaceVertex.Y * PI * deformation / 4.0);
+		planetSpaceVertex.Z = tan(planetSpaceVertex.Z * PI * deformation / 4.0);
+		
 		planetSpaceVertex.Normalize();
 		
 		float MaxChunkHeight = 0;
@@ -457,6 +447,7 @@ void FChunkTree::GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FV
 				Chunk->SetMobility(EComponentMobility::Movable);
 				Chunk->SetupAttachment(planet->GetRootComponent());
 				Chunk->SetRelativeLocation(planetSpaceVertex);
+				Chunk->SetCanEverAffectNavigation(false);
 
 				//FRotator RChunkrotation = FRotator(ChunkRotation.X, ChunkRotation.Y, ChunkRotation.Z);
 
@@ -497,6 +488,9 @@ void FChunkTree::GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FV
 				Chunk->GenerateRayTracingProxy = planet->GenerateRayTracingProxy;
 				Chunk->FoliageDensityScale = planet->GlobalFoliageDensityScale;
 				Chunk->GPUBiomeData = planet->GPUBiomeData;
+				Chunk->MaterialLayersNum = planet->MaterialLayersNum;
+				Chunk->CloseWaterMesh = planet->CloseWaterMesh;
+				Chunk->FarWaterMesh = planet->FarWaterMesh;
 
 				//Chunk->EventGenerate();
 
@@ -536,13 +530,9 @@ void FChunkTree::GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FV
 					Child3 = nullptr;
 					Child4 = nullptr;
 				}
-				//Chunk->SetDistanceFieldMode(EDynamicMeshComponentDistanceFieldMode::NoDistanceField);
-				//Chunk->SetMeshDrawPath(EDynamicMeshDrawPath::StaticDraw);
 				//planet->AddInstanceComponent(Chunk);
-				//Chunk->UploadFoliageData();
 				//Chunk->RegisterComponent();
 				Chunk->GenerateChunk();
-				//Chunk->SetComponentTickEnabled(true);
 			}
 		}
 		working = false;
@@ -582,7 +572,6 @@ void APlanetSpawner::DestroyChunkTrees() {
 
 void APlanetSpawner::PrecomputeChunkData()
 {
-
 	if (GPUBiomeData != nullptr)
 	{
 		GPUBiomeData->ConditionalBeginDestroy();
@@ -592,7 +581,7 @@ void APlanetSpawner::PrecomputeChunkData()
 
 	if (PlanetData->BiomeData.Num() > 0)
 	{
-		uint8 ParameterCount = 6;
+		uint8 ParameterCount = 5;
 
 		GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, PlanetData->BiomeData.Num(), PF_R16F);
 		GPUBiomeData->MipGenSettings = TMGS_NoMipmaps;
@@ -603,12 +592,17 @@ void APlanetSpawner::PrecomputeChunkData()
 		FByteBulkData& ImageData = MipMap.BulkData;
 		FFloat16* RawImageData = (FFloat16*)ImageData.Lock(LOCK_READ_WRITE);
 
+		TArray<uint8> UniqueLayers;
+
 		for (int32 y = 0; y < PlanetData->BiomeData.Num(); y++)
 		{
 			RawImageData[y * ParameterCount + 0] = PlanetData->BiomeData[y].MinTemperature;
 			RawImageData[y * ParameterCount + 1] = PlanetData->BiomeData[y].MaxTemperature;
 			RawImageData[y * ParameterCount + 2] = PlanetData->BiomeData[y].TerrainCurveIndex;
 			RawImageData[y * ParameterCount + 3] = PlanetData->BiomeData[y].GenerateForest;
+			RawImageData[y * ParameterCount + 4] = PlanetData->BiomeData[y].MaterialLayerIndex;
+
+			UniqueLayers.AddUnique(PlanetData->BiomeData[y].MaterialLayerIndex);
 		}
 
 		ImageData.Unlock();
@@ -616,6 +610,8 @@ void APlanetSpawner::PrecomputeChunkData()
 		// Free CPU bulk after upload
 		GPUBiomeData->UpdateResource();
 		MipMap.BulkData.RemoveBulkData();
+
+		MaterialLayersNum = UniqueLayers.Num();
 
 		// Debug
 		GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow,
@@ -625,81 +621,50 @@ void APlanetSpawner::PrecomputeChunkData()
 
 
 	Triangles.Empty();
-	float VerticesAmount = ChunkQuality + 1;
+	int32 VerticesAmount = ChunkQuality + 1;
 
 	for (int y = 0; y < VerticesAmount - 1; y++)
 	{
 		for (int x = 0; x < VerticesAmount - 1; x++)
 		{
-			Triangles.Add(x + 1 + y * VerticesAmount);
-			Triangles.Add(x + y * VerticesAmount);
-			Triangles.Add(x + VerticesAmount + y * VerticesAmount);
+			int32 v0 = x + y * VerticesAmount;
+			int32 v1 = v0 + 1;
+			int32 v2 = v0 + VerticesAmount;
+			int32 v3 = v2 + 1;
 
-			Triangles.Add(x + VerticesAmount + y * VerticesAmount);
-			Triangles.Add(x + VerticesAmount + 1 + y * VerticesAmount);
-			Triangles.Add(x + 1 + y * VerticesAmount);
+			// Triangle 1
+			Triangles.Add(v0);
+			Triangles.Add(v2);
+			Triangles.Add(v1);
 
-
+			// Triangle 2
+			Triangles.Add(v1);
+			Triangles.Add(v2);
+			Triangles.Add(v3);
 		}
 	}
-}
 
-void APlanetSpawner::AddWaterChunk(UChunkComponent* Chunk, FTransform WaterTransform, FVector OriginalLocation, int RecursionLevel, FVector ChunkPositionOffset)
-{
-	if (PlanetData->GenerateWater)
+	if (FoliageActor != nullptr)
 	{
-		//spawn static mesh component for water chunk
-		UStaticMeshComponent* WaterMesh = NewObject<UStaticMeshComponent>(this, NAME_None, RF_Transient);
-		WaterMesh->SetMobility(EComponentMobility::Movable);
-		WaterMesh->SetupAttachment(GetRootComponent());
-		WaterMesh->SetRelativeTransform(WaterTransform);
-		WaterMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		WaterMesh->CastShadow = false;
-		WaterMesh->SetVisibleInRayTracing(false);
-		
-		if (RecursionLevel != PlanetData->maxRecursionLevel)
-        {
-			WaterMesh->SetStaticMesh(FarWaterMesh);
-        }
-        else
-        {
-        	WaterMesh->SetStaticMesh(CloseWaterMesh);
-        }
-
-		if (RecursionLevel >= PlanetData->RecursionLevelForMaterialChange)
+		//Destroy InstancedStaticMeshComponents
+		TArray<UInstancedStaticMeshComponent*> ISMCs;
+		FoliageActor->GetComponents<UInstancedStaticMeshComponent>(ISMCs);
+		for (UInstancedStaticMeshComponent* ISMC : ISMCs)
 		{
-			WaterMesh->SetMaterial(0, PlanetData->CloseWaterMaterial);
+			ISMC->DestroyComponent();
 		}
-		else
-		{
-			WaterMesh->SetMaterial(0, PlanetData->FarWaterMaterial);
-		}
-
-		UMaterialInstanceDynamic* MaterialInst = WaterMesh->CreateDynamicMaterialInstance(0, WaterMesh->GetMaterial(0));
-		MaterialInst->SetTextureParameterValue("HeightMap", Chunk->RenderTarget);
-		MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
-		MaterialInst->SetVectorParameterValue("PositionOffset", UKismetMathLibrary::InverseTransformLocation(WaterTransform, ChunkPositionOffset));
-		//WaterMesh->SetMaterial(0, MaterialInst);
-		WaterMesh->RegisterComponent();
-		//this->AddInstanceComponent(WaterMesh);
-
-		WaterChunkTransforms.Add(Chunk, WaterMesh);
+		ISMCs.Empty();
+		//Destroy the actor
+		FoliageActor->Destroy();
 	}
+	FoliageActor = nullptr;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.ObjectFlags = RF_Transient;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	FoliageActor = GetWorld()->SpawnActor<AFoliageSpawner>(AFoliageSpawner::StaticClass(), GetActorLocation(), FRotator(0.0f, 0.0f, 0.0f), SpawnParams);
+	FoliageActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
+
 }
 
-void APlanetSpawner::RemoveWaterChunk(UChunkComponent* Chunk)
-{
-	if (WaterChunkTransforms.Contains(Chunk))
-	{
-		WaterChunkTransforms[Chunk]->UnregisterComponent();
-		WaterChunkTransforms[Chunk]->DestroyComponent();
-		WaterChunkTransforms.Remove(Chunk);
-	}
-	else
-	{
-		//print error
-		GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Red, FString::Printf(TEXT("bbbbbb")));
-
-	}
-}
 

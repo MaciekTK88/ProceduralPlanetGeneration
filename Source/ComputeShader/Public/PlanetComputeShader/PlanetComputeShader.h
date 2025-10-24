@@ -15,12 +15,15 @@ struct COMPUTESHADER_API FPlanetComputeShaderDispatchParams
 	int Z;
 
 	
-	FVector3f Input[4];
-	UTextureRenderTarget2D* InputRenderTarget;
+	FVector3f ChunkLocation;
+	FIntVector ChunkRotation;
+	FVector3f ChunkOriginLocation;
+	float ChunkSize;
+	float PlanetRadius;
+	float NoiseHeight;
+	UTextureRenderTarget2D* BiomeMap;
 	UTexture2D* CurveAtlas;
 	UTexture2D* BiomeDataTexture;
-	float Output[110592];
-	float OutputVC[110592];
 	int PlanetType = 0;
 	uint32 BiomeCount;
 	int ChunkQuality;

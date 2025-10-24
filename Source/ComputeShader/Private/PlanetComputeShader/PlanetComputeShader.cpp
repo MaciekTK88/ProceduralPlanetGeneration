@@ -59,13 +59,19 @@ public:
 
 		//SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<float>, Agent)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float3>, Input)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, InputRenderTarget)
-		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float3>, CurveAtlas)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, BiomeMap)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float4>, CurveAtlas)
 		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float>, BiomeDataTexture)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Output)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutputVC)
-		SHADER_PARAMETER(uint32, BiomeCountInfo)
-		SHADER_PARAMETER(int, ChunkQualityInfo)
+		SHADER_PARAMETER(uint32, biomeCount)
+		SHADER_PARAMETER(int, chunkQuality)
+		SHADER_PARAMETER(FVector3f, chunkLocation)
+		SHADER_PARAMETER(FIntVector, chunkRotation)
+		SHADER_PARAMETER(FVector3f, chunkOriginLocation)
+		SHADER_PARAMETER(float, chunkSize)
+		SHADER_PARAMETER(float, planetRadius)
+		SHADER_PARAMETER(float, noiseHeight)
 		
 
 	END_SHADER_PARAMETER_STRUCT()
@@ -133,17 +139,10 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 
 		if (bIsShaderValid) {
 			FPlanetComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FPlanetComputeShader::FParameters>();
-
 			
-			const void* RawData = (void*)Params.Input;
-			int NumInputs = 4;
-			int InputSize = sizeof(FVector3f);
-			FRDGBufferRef InputBuffer = CreateUploadBuffer(GraphBuilder, TEXT("InputBuffer"), InputSize, NumInputs, RawData, InputSize * NumInputs);
 
-			PassParameters->Input = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(InputBuffer, PF_R32G32B32F));
-
-			FRDGTextureRef RenderTargetRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.InputRenderTarget->GetResource()->TextureRHI, TEXT("InputRenderTarget")));
-			PassParameters->InputRenderTarget = GraphBuilder.CreateUAV(RenderTargetRDG);
+			FRDGTextureRef RenderTargetRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.BiomeMap->GetResource()->TextureRHI, TEXT("BiomeMap")));
+			PassParameters->BiomeMap = GraphBuilder.CreateUAV(RenderTargetRDG);
 
 			FRDGTextureRef CurveAtlas = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.CurveAtlas->GetResource()->TextureRHI, TEXT("CurveAtlas")));
 			PassParameters->CurveAtlas = GraphBuilder.CreateSRV(CurveAtlas);
@@ -152,9 +151,14 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 			FRDGTextureRef BiomeDataTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.BiomeDataTexture->GetResource()->TextureRHI, TEXT("BiomeDataTexture")));
 			PassParameters->BiomeDataTexture = GraphBuilder.CreateSRV(BiomeDataTexture);
 
-			PassParameters->BiomeCountInfo = Params.BiomeCount;
-
-			PassParameters->ChunkQualityInfo = Params.ChunkQuality;
+			PassParameters->biomeCount = Params.BiomeCount;
+			PassParameters->chunkQuality = Params.ChunkQuality;
+			PassParameters->chunkLocation = Params.ChunkLocation;
+			PassParameters->chunkRotation = Params.ChunkRotation;
+			PassParameters->chunkOriginLocation = Params.ChunkOriginLocation;
+			PassParameters->chunkSize = Params.ChunkSize;
+			PassParameters->planetRadius = Params.PlanetRadius;
+			PassParameters->noiseHeight = Params.NoiseHeight;
 			
 			FRDGBufferRef OutputBuffer = GraphBuilder.CreateBuffer(
 				FRDGBufferDesc::CreateBufferDesc(sizeof(float), 110592),

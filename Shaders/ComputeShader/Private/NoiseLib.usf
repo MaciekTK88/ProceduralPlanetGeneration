@@ -121,12 +121,8 @@ float fbmE(float3 x, int octaves, float ridgePower)
     return total;
 }
 
-//------------------------------------------------------------------------------
-// 2D "erosion" FBM + directional layers (adapted from Clay John's GLSL)
-//------------------------------------------------------------------------------
 
-// Gradient noise + analytic derivative
-// returns (value, dF/dx, dF/dy) in a float3: .x=val, .yz=derivatives
+//------------------------------------------------------------------------------
 float3 noised2D(float2 p)
 {
     // Integer and fractional parts of the coordinate
@@ -158,7 +154,7 @@ float3 noised2D(float2 p)
     return float3(-1.0 + 2.0 * value, 2.0 * derivatives);
 }
 
-// "Gavoronoise" directional erosion cell‐noise returning float3(x=height,yz=deriv)
+//------------------------------------------------------------------------------
 float3 erosion2d(float2 p, float2 dir)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -185,8 +181,6 @@ float3 erosion2d(float2 p, float2 dir)
     return sum / wtot;
 }
 
-// Build an FBM terrain + 5 layers of "erosion"
-// returns float (height only, matching original GLSL usage)
 float mountain2d(float2 p, float scale, out float erosion)
 {
     // 1) base FBM
@@ -201,10 +195,10 @@ float mountain2d(float2 p, float scale, out float erosion)
         freq *= 2.0;
     }
     
-    // slope‐direction
+    //slope‐direction
     float2 dir = n.zy * float2(1.0,-1.0);
     
-    // 2) erosion layers
+    //erosion layers
     float3 hsum = float3(0.0, 0.0, 0.0); 
     float  a    = 1.0;// * smoothstep(0.3, 0.5, n.x*0.5 + 0.5);
     float  f    = 1.0;
@@ -219,25 +213,14 @@ float mountain2d(float2 p, float scale, out float erosion)
     //smooth out erosion
     hsum.x = smoothstep(-1.0, 1.0, hsum.x);
     erosion = hsum.x;
-    //hsum *= 1 - n.x * n.x;
-    //hsum = 0;
-    // final height
+
     float height = smoothstep(-1.0, 1.0, n.x) + hsum.x * 0.1;
     return height;
 }
 
-//------------------------------------------------------------------------------
-// Triplanar‐blended height on a sphere
-//     Input:
-//       float3 N        – normalized 3D direction (e.g. world‐space sphere normal)
-//       float   scale   – noise UV scale (e.g. 4.0)
-//       float   density – noise "density" parameter (unused in this version)
-//     Output:
-//       float            – height in [0,1]
-//------------------------------------------------------------------------------
+
 float ErosionHeightTriplanar(float3 N, float scale, out float erosion)
 {
-    // blend weights from |Nx|,|Ny|,|Nz|
     float3 w = abs(N);
     w /= (w.x + w.y + w.z);
 
@@ -250,7 +233,7 @@ float ErosionHeightTriplanar(float3 N, float scale, out float erosion)
     float hy = mountain2d(N.zx, scale, erosiony);
     float hz = mountain2d(N.xy, scale, erosionz);
 
-    erosion = (erosionx * w.x + erosiony * w.y + erosionz * w.z);
+    erosion = ((erosionx * w.x + erosiony * w.y + erosionz * w.z));
     
     // triplanar blend
     return hx*w.x + hy*w.y + hz*w.z;
@@ -258,7 +241,7 @@ float ErosionHeightTriplanar(float3 N, float scale, out float erosion)
 
 
 //------------------------------------------------------------------------------
-// sphereToUV: Converts a normalized sphere position to UV coordinates.
+//Converts a normalized sphere position to UV coordinates.
 float2 sphereToUV(float3 pos)
 {
     // Ensure pos is normalized
@@ -276,7 +259,7 @@ float2 sphereToUV(float3 pos)
 
 
 //------------------------------------------------------------------------------
-// warpPosition: Applies an additional warp to the sphere coordinate for variation.
+//Applies an additional warp to the sphere coordinate for variation.
 float3 warpPosition(float3 sphereDir, float warpStrength)
 {
     float3 warp = float3(
@@ -288,15 +271,15 @@ float3 warpPosition(float3 sphereDir, float warpStrength)
     return normalize(sphereDir);
 }
 
-// --- Revised Tectonic Effect Function ---
-float computeInstantPlateEffect(float3 pos, float PlateSizeFactor)
+
+float computeInstantPlateEffect(float3 pos, float plateSizeFactor)
 {
-    float plateFrequency = 8.0 * PlateSizeFactor;
+    float plateFrequency = 8.0 * plateSizeFactor;
     float3 p = pos * plateFrequency;
     int3 ip = (int3)floor(p);
     float radius = length(pos);
 
-    // --- Drift calculation ---
+    //Drift calculation
     float totalW = 0.0;
     float3 driftSum = float3(0,0,0);
     float3 drifts[27];
@@ -360,7 +343,7 @@ float voronoi(float3 p, out float3 cellOrigin)
 
     float3 bestCell = 0.0;
 
-    for (int i = -1; i <= 1; ++i) // changed to -1..1 for proper neighborhood search
+    for (int i = -1; i <= 1; ++i)
     {
         for (int j = -1; j <= 1; ++j)
         {
@@ -368,15 +351,15 @@ float voronoi(float3 p, out float3 cellOrigin)
             {
                 float3 g = float3(i, j, k);
                 float3 offset = Hash3D(ip + g) * 0.3;
-                float3 candidatePos = g + offset; // local position inside cube
-                float3 diff = fp - candidatePos;  // vector from p to feature point
+                float3 candidatePos = g + offset;
+                float3 diff = fp - candidatePos;
                 float d = dot(diff, diff);
 
                 if (d < r.x)
                 {
                     r.y = r.x;
                     r.x = d;
-                    bestCell = ip + g + offset; // store world-space cell origin
+                    bestCell = ip + g + offset;
                 }
                 else if (d < r.y)
                 {
@@ -387,7 +370,7 @@ float voronoi(float3 p, out float3 cellOrigin)
     }
 
     cellOrigin = bestCell;
-    return r.x; // squared distance to closest point
+    return r.x;
 }
 
 // Craters function
@@ -397,7 +380,7 @@ float CratersScaled(float3 p, float scale)
     
     float v = voronoi(p, cellOrigin);
 
-    //if (Hash3D(cellOrigin + float3(10,0,0)) > 0.5) // 50% chance to skip crater
+    //if (Hash3D(cellOrigin + float3(10,0,0)) > 0.5)
     //    return 0.15;
     
     // Base crater depression
@@ -414,10 +397,9 @@ float CratersScaled(float3 p, float scale)
     return base + rim;
 }
 
-// Multi-octave craters with proportional rims
 float fbmCraters(float3 p)
 {
-    float f = 3.2;  // frequency
+    float f = 3.2;  //frequency
     float r = 0.0;
 
     for (int i = 0; i < 3; ++i)
@@ -434,7 +416,7 @@ float2 Voronoi3D(float3 x, float time)
     float3 n = floor(x);
     float3 f = frac(x);
 
-    float4 m = float4(8.0, 0.0, 0.0, 0.0); // distance, o.x, o.y, o.z
+    float4 m = float4(8.0, 0.0, 0.0, 0.0);
 
     [unroll]
     for (int k = -1; k <= 1; ++k)
@@ -459,6 +441,15 @@ float2 Voronoi3D(float3 x, float time)
     }
 
     return float2(m.x, m.y + m.z + m.w);
+}
+
+//------------------------------------------------------------------------------
+//Smooths elevation near water level.
+float flattenElevation(float elevation, float waterLevel, float threshold)
+{
+    float diff = abs(elevation - waterLevel);
+    float mask = smoothstep(0.0, threshold, diff);
+    return lerp(waterLevel, elevation, mask);
 }
 
 #endif

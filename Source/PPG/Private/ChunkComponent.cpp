@@ -49,38 +49,6 @@ void UChunkComponent::GenerationComplete()
 			ChunksToFinish->Add(this);
 		});
 	}
-	
-
-	/*
-	if (ParentChunk == nullptr)
-	{
-		for (int i = 0; i < ChunksToRemove.Num(); i++)
-		{
-			ChunksToRemove[i]->BeginSelfDestruct();
-		}
-		ChunksToRemove.Empty();
-		ReadyToRemove = true;
-	}
-	else
-	{
-		if (ParentChunk->ReadyToRemoveCounter >= 3 && ChunkRemover == true)
-		{
-			for (int i = 0; i < ChunksToRemove.Num(); i++)
-			{
-				ChunksToRemove[i]->BeginSelfDestruct();
-			}
-			ChunksToRemove.Empty();
-
-			ReadyToRemove = true;
-		}
-		else if (ChunkRemover == false)
-		{
-			ParentChunk->ReadyToRemoveCounter++;
-			ReadyToRemove = true;
-		}
-	}
-	ready = true;
-	*/
 }
 
 
@@ -91,71 +59,57 @@ void UChunkComponent::SetFoliageActor(AActor* NewFoliageActor)
 
 void UChunkComponent::UploadFoliageData()
 {
-	//print foliage actor name
-	//GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("FoliageActor = %s"), *FoliageActor->GetName()));
-	
 
 	for (int i = 0; i < FoliageRuntimeData.Num(); i++)
 	{
 		if (GenerateFoliage == true && FoliageRuntimeData[i].LocalFoliageTransforms.Num() > 0)
 		{
-			UInstancedStaticMeshComponent* hismc;
-			hismc = NewObject<UInstancedStaticMeshComponent>(FoliageActor, NAME_None, RF_Transient);
-			hismc->SetupAttachment(FoliageActor->GetRootComponent());
-			hismc->SetFlags(RF_Transactional);
-			hismc->SetMobility(EComponentMobility::Movable);
-			hismc->SetGenerateOverlapEvents(false);
-			hismc->WorldPositionOffsetDisableDistance = FoliageRuntimeData[i].Foliage.WPODisableDistance;
-			hismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.WPO);
-			hismc->bAffectDistanceFieldLighting = false;
-			hismc->InstanceEndCullDistance = FoliageRuntimeData[i].Foliage.CullingDistance;
-			hismc->bWorldPositionOffsetWritesVelocity = FoliageRuntimeData[i].Foliage.WPO;
-			hismc->bDisableCollision = true;
-			hismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
-			hismc->SetCollisionProfileName(TEXT("Custom"));
-			hismc->SetCollisionObjectType(ECollisionChannel::ECC_WorldDynamic);
-			hismc->SetCollisionResponseToChannel(ECollisionChannel::ECC_GameTraceChannel2, ECollisionResponse::ECR_Block);
-			//hismc->SetVisibility(false);
+			UInstancedStaticMeshComponent* Ismc;
+			Ismc = NewObject<UInstancedStaticMeshComponent>(FoliageActor, NAME_None, RF_Transient);
+			Ismc->SetupAttachment(FoliageActor->GetRootComponent());
+			Ismc->SetMobility(EComponentMobility::Movable);
+			Ismc->SetGenerateOverlapEvents(false);
+			Ismc->WorldPositionOffsetDisableDistance = FoliageRuntimeData[i].Foliage.WPODisableDistance;
+			Ismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.WPO);
+			Ismc->bAffectDistanceFieldLighting = false;
+			Ismc->InstanceEndCullDistance = FoliageRuntimeData[i].Foliage.CullingDistance;
+			Ismc->bWorldPositionOffsetWritesVelocity = FoliageRuntimeData[i].Foliage.WPO;
+			Ismc->bDisableCollision = true;
+			Ismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
+			Ismc->SetCanEverAffectNavigation(false);
 
-			if (FoliageRuntimeData[i].Foliage.ShadowDisableDistance >= recursionLevel && FoliageRuntimeData[i].Foliage.ShadowDisableDistance != 0)
+
+			if (FoliageRuntimeData[i].Foliage.ShadowDisableDistance <= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.ShadowDisableDistance != 0)
 			{
-				hismc->CastShadow = false;
-				hismc->bCastContactShadow = false;
-				hismc->SetVisibleInRayTracing(false);
+				Ismc->CastShadow = false;
+				Ismc->bCastContactShadow = false;
+				Ismc->SetVisibleInRayTracing(false);
 			}
 			
-			if (FoliageRuntimeData[i].Foliage.CollisionEnableDistance <= recursionLevel && FoliageRuntimeData[i].Foliage.CollisionEnableDistance != 0 && FoliageRuntimeData[i].Foliage.Collision == true)
+			if (FoliageRuntimeData[i].Foliage.CollisionEnableDistance >= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.CollisionEnableDistance != 0 && FoliageRuntimeData[i].Foliage.Collision == true)
 			{
-				hismc->bDisableCollision = false;
-				hismc->bCastContactShadow = false;
-				//hismc->bUseDefaultCollision = true;
+				Ismc->bDisableCollision = false;
 			}
 
-			if (FoliageRuntimeData[i].Foliage.LowPolyActivation >= recursionLevel)
+			if (FoliageRuntimeData[i].Foliage.LowPolyActivation <= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.LowPolyMesh != nullptr)
 			{
-				hismc->SetStaticMesh(FoliageRuntimeData[i].Foliage.LowPolyMesh);
-				//hismc->CastShadow = false;
-				hismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.FarFoliageWPO);
-				//hismc->bCastContactShadow = true;
-				//hismc->WorldPositionOffsetDisableDistance = 0;
-				hismc->bAffectDistanceFieldLighting = false;
-				hismc->SetVisibleInRayTracing(false);
+				Ismc->SetStaticMesh(FoliageRuntimeData[i].Foliage.LowPolyMesh);
+				Ismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.FarFoliageWPO);
+				Ismc->bAffectDistanceFieldLighting = false;
+				Ismc->SetVisibleInRayTracing(false);
+				Ismc->bDisableCollision = true;
 
 			}
 			else
 			{
-				hismc->SetStaticMesh(FoliageRuntimeData[i].Foliage.FoliageMesh);
-				hismc->bDisableCollision = not FoliageRuntimeData[i].Foliage.Collision;
+				Ismc->SetStaticMesh(FoliageRuntimeData[i].Foliage.FoliageMesh);
 			}
 
 			//hismc->bIsAsyncBuilding = true;
-			hismc->SetRelativeTransform(FTransform(GetRelativeRotation(), ChunkLocation, FVector(1.0f, 1.0f, 1.0f)));
-			hismc->RegisterComponent();
-			//FoliageActor->AddInstanceComponent(hismc);
-			FoliageRuntimeData[i].hismc = hismc;
-			
-			FoliageRuntimeData[i].hismc->AddInstances(FoliageRuntimeData[i].LocalFoliageTransforms, false, false, false);
-			//PlanetData->FoliageList[i].hismc->SetActive(false);
+			Ismc->SetRelativeTransform(FTransform(GetRelativeRotation(), ChunkLocation, FVector(1.0f, 1.0f, 1.0f)));
+			Ismc->AddInstances(FoliageRuntimeData[i].LocalFoliageTransforms, false, false, false);
+			Ismc->RegisterComponent();
+			FoliageRuntimeData[i].Ismc = Ismc;
 	
 		}
 	}
@@ -166,7 +120,6 @@ void UChunkComponent::GenerateChunk()
 {
 	//clear all arrays
 	Vertices.Empty();
-	//Triangles.Empty();
 	Normals.Empty();
 	Octahedrons.Empty();
 	UVs.Empty();
@@ -192,27 +145,29 @@ void UChunkComponent::GenerateChunk()
 
 	
 	//create PF_G16 UTextureRenderTarget2D
-	RenderTarget = NewObject<UTextureRenderTarget2D>(this, NAME_None, RF_Transient);
-	RenderTarget->bCanCreateUAV = true;
-	RenderTarget->bSupportsUAV = true;
-	RenderTarget->InitCustomFormat(VerticesAmount, VerticesAmount * 2, PF_R8G8B8A8, true);
-	RenderTarget->RenderTargetFormat = RTF_RGBA8;
-	RenderTarget->bAutoGenerateMips = false;
-	RenderTarget->SRGB = false;
-	RenderTarget->Filter = TF_Nearest;
-	RenderTarget->AddressX = TA_Clamp;
-	RenderTarget->AddressY = TA_Clamp;
+	BiomeMap = NewObject<UTextureRenderTarget2D>(this, NAME_None, RF_Transient);
+	BiomeMap->bCanCreateUAV = true;
+	BiomeMap->bSupportsUAV = true;
+	BiomeMap->InitCustomFormat(VerticesAmount, VerticesAmount * 2, PF_R8G8B8A8, true);
+	BiomeMap->RenderTargetFormat = RTF_RGBA8;
+	BiomeMap->bAutoGenerateMips = false;
+	BiomeMap->SRGB = false;
+	BiomeMap->Filter = TF_Nearest;
+	BiomeMap->AddressX = TA_Clamp;
+	BiomeMap->AddressY = TA_Clamp;
 	//RenderTarget->ClearColor = FLinearColor::Black; // Optional: Set default clear color
-	RenderTarget->UpdateResourceImmediate(); // Must be called after setting UAV flags
+	BiomeMap->UpdateResourceImmediate(); // Must be called after setting UAV flags
 
 	
 	// Create a dispatch parameters struct and fill it the input array with our args
 	FPlanetComputeShaderDispatchParams Params(VerticesAmount, VerticesAmount, 1);
-	Params.Input[0] = FVector3f(PlanetSpaceLocation);
-	Params.Input[1] = FVector3f(PlanetSpaceRotation.X, PlanetSpaceRotation.Y, PlanetSpaceRotation.Z);
-	Params.Input[2] = FVector3f(ChunkLocation);
-	Params.Input[3] = FVector3f(ChunkSize, PlanetData->PlanetRadius, PlanetData->noiseHeight);
-	Params.InputRenderTarget = RenderTarget;
+	Params.ChunkLocation = FVector3f(PlanetSpaceLocation);
+	Params.ChunkRotation = PlanetSpaceRotation;
+	Params.ChunkOriginLocation = FVector3f(ChunkLocation);
+	Params.ChunkSize = ChunkSize;
+	Params.PlanetRadius = PlanetData->PlanetRadius;
+	Params.NoiseHeight = PlanetData->noiseHeight;
+	Params.BiomeMap = BiomeMap;
 	Params.CurveAtlas = PlanetData->CurveAtlas;
 	Params.BiomeDataTexture = GPUBiomeData;
 	Params.BiomeCount = PlanetData->BiomeData.Num();
@@ -228,6 +183,7 @@ void UChunkComponent::GenerateChunk()
 	VertexHeight.Reserve(VerticesAmount * VerticesAmount);
 	Slopes.Reserve(VerticesAmount * VerticesAmount);
 	Biomes.Reserve(VerticesAmount * VerticesAmount);
+	ForestNoise.Reserve(VerticesAmount * VerticesAmount);
 	
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](TArray<float> OutputVal, TArray<uint8> OutputVCVal) {
 		//this->Completed.Broadcast(OutputVal);
@@ -270,12 +226,11 @@ void UChunkComponent::GenerateChunk()
 					//uint8 Temperature = OutputVCVal[(x + y * VerticesAmount) * 3 + 1];
 					uint8 BiomeIndex = OutputVCVal[(x + y * VerticesAmount) * 3 + 2];
 					uint8 ShaderForestNoise = OutputVCVal[(x + y * VerticesAmount) * 3 + 1];
-					uint8 ForestTextureIndex = 255;
 					//FVector PlanetSpaceVertex = PlanetData->PlanetTransformLocation(ChunkLocation, PlanetSpaceRotation,FVector(Vertex));
 					//uint8 CurrentRandomForest = uint8(((FMath::PerlinNoise3D((FVector(Vertex) + ChunkLocation) * 0.0002) + 1) / 2) * 180);//HashFVectorToVector2D(FVector(PlanetSpaceVertex),0,120).X);
 					//RandomForest.Add(CurrentRandomForest);
 
-					if ((ShaderForestNoise <= 0.5 || noiseheight > PlanetData->BiomeData[BiomeIndex].ForestHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
+					if ((ShaderForestNoise <= 128 || noiseheight > PlanetData->BiomeData[BiomeIndex].ForestHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
 					{
 						FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
 						ShaderForestNoise = 0;
@@ -283,22 +238,15 @@ void UChunkComponent::GenerateChunk()
 					else if (PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
 					{
 						FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].ForestFoliageData);
-						ForestTextureIndex = PlanetData->BiomeData[BiomeIndex].ForestTextureIndex;
 					}
-				
-					//uint8 height = FMath::Clamp((int)((noise + 1.0) * 127.5 * 0.7), 0, 255);
-					VertexColors.Add(FColor(PlanetData->BiomeData[BiomeIndex].SlopeTextureIndex, OutputVCVal[(x + y * VerticesAmount) * 3], ForestTextureIndex, PlanetData->BiomeData[BiomeIndex].GroundTextureIndex));
-					//VertexColors.Add(FColor(0, 0, 0, 255));
-
+					
+					VertexColors.Add(FColor(OutputVCVal[(x + y * VerticesAmount) * 3], ShaderForestNoise, BiomeIndex, 0));
+					
 					VertexHeight.Add(noiseheight);
 					Slopes.Add(0);
 					Biomes.Add(BiomeIndex);
 					ForestNoise.Add(ShaderForestNoise);
-				
-
-					//FVector3f normal = (Vertices[x + y * VerticesAmount] + FVector3f(ChunkLocation)).GetSafeNormal();
-					//Normals.Add(normal);
-					//Octahedrons.Add(FVoxelOctahedron(normal));
+					
 				}
 			}
 			ChunkMaxHeight = LocalChunkMaxHeight;
@@ -409,37 +357,28 @@ void UChunkComponent::CompleteChunkGeneration()
 						return;
 					}
 				
-					if (FoliageBiomes[x]->FoliageList[i].FoliageDistance <= recursionLevel)
+					if (FoliageBiomes[x]->FoliageList[i].FoliageDistance >= PlanetData->maxRecursionLevel - recursionLevel)
 					{
 						FFoliageRuntimeDataS Biome;
 						Biome.Foliage = FoliageBiomes[x]->FoliageList[i];
 						int index = FoliageRuntimeData.Add(Biome);
-
-						//FoliageRuntimeData[i].LocalFoliageTransforms.Empty();
-						//FRandomStream Stream((i + 2) * (x + 3));
-				
+						
 
 						int Density = Biome.Foliage.FoliageDensity;
 						
-
-						//if (Biome.Foliage.LowPolyActivation < recursionLevel)
-						//{
-							//Density *= ChunkSize / 100000;
-						//}
-					
-
+						
 						if (Biome.Foliage.ScalableDensity == true)
 						{
 							Density = Density * FoliageDensityScale;
 						}
 
-						if (Biome.Foliage.FarFoliageDensityBoost == true && Biome.Foliage.LowPolyActivation >= recursionLevel)
+						if (Biome.Foliage.LowPolyActivation <= PlanetData->maxRecursionLevel - recursionLevel && Biome.Foliage.LowPolyMesh != nullptr)
 						{
-							Density = Density * FarFoliageDensityScale;
+							Density = Density * Biome.Foliage.FarFoliageDensityScale;
 						}
 
 						//LocalFoliageTransform.Empty();
-						int localdensity = Density * FMath::Pow(2, PlanetData->maxRecursionLevel - recursionLevel);
+						int localdensity = Density * FMath::Pow(2, float(PlanetData->maxRecursionLevel - recursionLevel));
 						
 						for (int y = 0; y < localdensity; y++)
 						{
@@ -451,8 +390,8 @@ void UChunkComponent::CompleteChunkGeneration()
 								float ylocalpos = z * minchunkSize / (float)(Density);
 								
 							
-								FVector planetSpacefoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
-								FVector NormalizedfoliageLocation = planetSpacefoliageLocation.GetSafeNormal() * PlanetData->PlanetRadius;
+								FVector PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
+								FVector NormalizedfoliageLocation = PlanetSpaceFoliageLocation.GetSafeNormal() * PlanetData->PlanetRadius;
 
 								//uint32 SeedValue = FCrc::MemCrc32(&NormalizedfoliageLocation, sizeof(FVector));
 								FRandomStream ScaleStream((int)(NormalizedfoliageLocation.X / 10000) + (int)(NormalizedfoliageLocation.Y / 10000) + (int)(NormalizedfoliageLocation.Z / 10000));
@@ -478,12 +417,12 @@ void UChunkComponent::CompleteChunkGeneration()
 
 								bool ShouldSpawn = true;
 								
-								if (ForestNoise[vertexIndex] > 0.5 && PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageBiomes[x])
+								if (ForestNoise[vertexIndex] > 128 && PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageBiomes[x])
 								{
 									ShouldSpawn = false;
 								}
 
-								if (ForestNoise[vertexIndex] <= 0.5 && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageBiomes[x])
+								if (ForestNoise[vertexIndex] <= 128 && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageBiomes[x])
 								{
 									ShouldSpawn = false;
 								}
@@ -495,12 +434,19 @@ void UChunkComponent::CompleteChunkGeneration()
 
 								if (ShouldSpawn == true)
 								{
-									planetSpacefoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
-									planetSpacefoliageLocation.Normalize();
+									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
 
-									//double noise6 = PlanetData->fbm(planetSpacefoliageLocation * PlanetData->noiseScale / 2, 2.0244, 0.454, 0.454, 6);//FMath::PerlinNoise3D(planetSpacefoliageLocation * noiseScale / 4) * 4;
-									//noise6 = ((noise6 - 0.25) * 40) - 6;
-									//noise6 = FMath::Clamp(noise6, -1, 1);
+									//transform planetSpaceVertex to -1, 1 range
+									float OriginalChunkSize = PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
+									PlanetSpaceFoliageLocation = PlanetSpaceFoliageLocation / (OriginalChunkSize / 2.0f);
+
+									//apply deformation
+									float deformation = 0.75;
+									PlanetSpaceFoliageLocation.X = tan(PlanetSpaceFoliageLocation.X * PI * deformation / 4.0);
+									PlanetSpaceFoliageLocation.Y = tan(PlanetSpaceFoliageLocation.Y * PI * deformation / 4.0);
+									PlanetSpaceFoliageLocation.Z = tan(PlanetSpaceFoliageLocation.Z * PI * deformation / 4.0);
+									
+									PlanetSpaceFoliageLocation.Normalize();
 								
 									double Height = VertexHeight[vertexIndex];
 
@@ -511,29 +457,22 @@ void UChunkComponent::CompleteChunkGeneration()
 						
 			
 
-									planetSpacefoliageLocation *= (PlanetData->PlanetRadius + Height - Biome.Foliage.DepthOffset);
-									planetSpacefoliageLocation = planetSpacefoliageLocation - (ChunkLocation - PlanetSpaceLocation);
-									//WorldfoliageLocation = planetSpacefoliageLocation + planetCenterWS;
+									PlanetSpaceFoliageLocation *= (PlanetData->PlanetRadius + Height - Biome.Foliage.DepthOffset);
+									PlanetSpaceFoliageLocation = PlanetSpaceFoliageLocation - (ChunkLocation - PlanetSpaceLocation);
 							
 						
 
 									if (Height > Biome.Foliage.MaxHeight || Height < Biome.Foliage.MinHeight)
 									{
 										ShouldSpawn = false;
-										VertexColors[vertexIndex].B = 255;
+										//VertexColors[vertexIndex].G = 255;
 									}
 
 									if (Slopes[vertexIndex] > 8 && Biome.Foliage.isSlopeFoliage == false)
 									{
 										ShouldSpawn = false;
-										VertexColors[vertexIndex].B = 255;
+										//VertexColors[vertexIndex].G = 255;
 									}
-
-						
-
-									//double Forestnoise = FMath::PerlinNoise3D(WorldfoliageLocation / 100000);
-
-									//FVector localfoliagelocation = UKismetMathLibrary::InverseTransformLocation(this->GetActorTransform(), WorldfoliageLocation);
 						
 						
 							
@@ -543,7 +482,7 @@ void UChunkComponent::CompleteChunkGeneration()
 						
 										if (Biome.Foliage.AlignToTarrain == false)
 										{						
-											Rot = UKismetMathLibrary::FindLookAtRotation(FVector(0,0, 0), planetSpacefoliageLocation);
+											Rot = UKismetMathLibrary::FindLookAtRotation(FVector(0,0, 0), PlanetSpaceFoliageLocation);
 											Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
 										}
 										else if (Vertices.IsValidIndex(vertexIndex) && Normals.IsValidIndex(vertexIndex))
@@ -556,19 +495,17 @@ void UChunkComponent::CompleteChunkGeneration()
 											Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
 										}
 
-										FTransform transform = FTransform(Rot, planetSpacefoliageLocation - PlanetSpaceLocation, FVector(1, 1, 1));
+										FTransform transform = FTransform(Rot, PlanetSpaceFoliageLocation - PlanetSpaceLocation, FVector(1, 1, 1));
 										Rot = FRotator(0, ScaleStream.FRandRange(0, 360), 0);
 										Rot = UKismetMathLibrary::TransformRotation(transform, Rot);
 									
-										transform = FTransform(Rot,planetSpacefoliageLocation - PlanetSpaceLocation,FVector(
-												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale) / 10,
-												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale) / 10,
-												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale) / 10)
+										transform = FTransform(Rot,PlanetSpaceFoliageLocation - PlanetSpaceLocation,FVector(
+												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale),
+												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale),
+												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale))
 												);
 																					
 										FoliageRuntimeData[index].LocalFoliageTransforms.Add(transform);
-										//GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("bbbbbb")));
-										//VertexColors[vertexIndex] = FColor(VertexColors[vertexIndex].R, VertexColors[vertexIndex].G, noise6 * 255, 255);
 									}
 								}
 								
@@ -603,18 +540,21 @@ void UChunkComponent::UploadChunk()
 
 		TVoxelArray<TConstVoxelArrayView<FVector2f>> TextureCoordinatesVV;
 		TextureCoordinatesVV.Add(TextureCoordinatesV);
+		TArray<int32> IntTriangles = TArray<int32>((*Triangles));
+
+		TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
 
 		FPlanetNaniteBuilder NaniteBuilder;
 		NaniteBuilder.PositionPrecision = -(PlanetData->maxRecursionLevel - recursionLevel) + 3;
-
+		NaniteBuilder.Mesh.Indices = Indices;
 		NaniteBuilder.Mesh.Positions = Positions;
-		
-		NaniteBuilder.Mesh.Positions3f = &Vertices;
+		NaniteBuilder.bCompressVertices = true;
+		//NaniteBuilder.Mesh.Positions3f = &Vertices;
 		NaniteBuilder.Mesh.Normals = Octahedrons;
-		NaniteBuilder.Mesh.Normals3f = &Normals;
+		//NaniteBuilder.Mesh.Normals3f = &Normals;
 		NaniteBuilder.Mesh.Colors = VertexColors;
 		NaniteBuilder.Mesh.TextureCoordinates = TextureCoordinatesVV;
-		NaniteBuilder.TrianglesM = Triangles;
+		//NaniteBuilder.TrianglesM = Triangles;
 		
 		
 
@@ -626,7 +566,8 @@ void UChunkComponent::UploadChunk()
 
 		// Generate the render data
 		TVoxelArray<int32> VertexOffsets;
-		RenderData = NaniteBuilder.CreateRenderData(VertexOffsets, bRaytracing);
+		TVoxelArray<int32> ClusteredIndices;
+		RenderData = NaniteBuilder.CreateRenderData(VertexOffsets, ClusteredIndices, bRaytracing);
 		
 
 		if (AbortAsync == true)
@@ -635,6 +576,8 @@ void UChunkComponent::UploadChunk()
 			return;
 		}
 		
+		
+		
 		AsyncTask(ENamedThreads::GameThread, [this]()
 		{
 			ChunkStaticMesh = NewObject<UStaticMesh>(this, NAME_None, RF_Transient);
@@ -642,103 +585,8 @@ void UChunkComponent::UploadChunk()
 			ChunkStaticMesh->bGenerateMeshDistanceField = false;
 			ChunkStaticMesh->SetStaticMaterials({ FStaticMaterial() });
 			ChunkStaticMesh->bSupportRayTracing = bRaytracing;
-/*
-			//if (bRaytracing)
-			//{
-				// Ensure UStaticMesh::HasValidRenderData returns true
-				// Use MAX_flt to try to not have the vertex picked by vertex snapping
-				//const TVoxelArray<FVector3f> DummyPositions = { FVector3f(MAX_flt) };
-				const int32 NumVertices = Vertices.Num();
-				LODResourcesArray[0].VertexBuffers.PositionVertexBuffer.Init(Vertices);
-				LODResourcesArray[0].VertexBuffers.StaticMeshVertexBuffer.Init(NumVertices, 1);
-				LODResourcesArray[0].VertexBuffers.ColorVertexBuffer.Init(VertexColors.Num());
-				
-				for (int32 i = 0; i < NumVertices; i++)
-				{
-					FVector3f Normal = (Normals)[i];
-					FVector3f TangentX, TangentY;
-					Normal.FindBestAxisVectors(TangentX, TangentY);
-					LODResourcesArray[0].VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(i, TangentX, TangentY, Normal);
-					LODResourcesArray[0].VertexBuffers.ColorVertexBuffer.VertexColor(i) = VertexColors[i];
-					LODResourcesArray[0].VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, 0, UVs[i]);
-				}
-
-				if (bRaytracing)
-				{
-					ChunkStaticMesh->GetRenderData()->InitializeRayTracingRepresentationFromRenderingLODs();
+								
 						
-					TPimplPtr<FCardRepresentationData> MeshCards;
-					FBox Box = Bounds.ToFBox();
-
-
-					MeshCards = MakePimpl<FCardRepresentationData>();
-
-
-					*MeshCards = FCardRepresentationData();
-					FMeshCardsBuildData& CardData = MeshCards->MeshCardsBuildData;
-
-					CardData.Bounds = Box;
-
-					CardData.bMostlyTwoSided = false;
-
-					MeshCardRepresentation::SetCardsFromBounds(CardData);
-					LODResourcesArray[0].CardRepresentationData = new FCardRepresentationData();
-					LODResourcesArray[0].CardRepresentationData->MeshCardsBuildData = CardData;
-				}
-				
-				// Ensure FStaticMeshChunkStaticMesh->GetRenderData()::GetFirstValidLODIdx doesn't return -1
-				LODResourcesArray[0].Sections.Emplace();
-				LODResourcesArray[0].IndexBuffer.SetIndices(*Triangles, EIndexBufferStride::Force16Bit);
-				LODResourcesArray[0].Sections[0].FirstIndex = 0;
-				LODResourcesArray[0].Sections[0].NumTriangles = Triangles->Num() / 3;
-
-				LODResourcesArray[0].Sections[0].FirstIndex = 0;
-				LODResourcesArray[0].Sections[0].MinVertexIndex = 0;
-				LODResourcesArray[0].Sections[0].MaxVertexIndex = NumVertices - 1;
-				LODResourcesArray[0].Sections[0].MaterialIndex = 0;			
-				//LODResourcesArray[0].Sections[0].bEnableCollision = false;
-				//LODResourcesArray[0].Sections[0].bVisibleInRayTracing = true;
-
-				LODResourcesArray[0].BuffersSize = NumVertices * sizeof(FVector3f);
-				
-				//LODResourcesArray[0].IndexBuffer.TrySetAllowCPUAccess(false);
-				
-			//}
-			//else
-			//{
-				FStaticMeshLODResourcesArray& LODResourcesArray = ChunkStaticMesh->GetRenderData()->LODResources;
-				LODResourcesArray[0].bBuffersInlined = true;
-				LODResourcesArray[0].Sections.Emplace();
-				LODResourcesArray[0].Sections[0].MaterialIndex = 0;
-				// Ensure UStaticMesh::HasValidChunkStaticMesh->GetRenderData() returns true
-				// Use MAX_flt to try to not have the vertex picked by vertex snapping
-				const TVoxelArray<FVector3f> DummyPositions = { FVector3f(MAX_flt) };
-				
-				LODResourcesArray[0].VertexBuffers.StaticMeshVertexBuffer.Init(DummyPositions.Num(), 1);
-				LODResourcesArray[0].VertexBuffers.PositionVertexBuffer.Init(DummyPositions);
-				LODResourcesArray[0].VertexBuffers.ColorVertexBuffer.Init(DummyPositions.Num());
-
-				// Ensure FStaticMeshChunkStaticMesh->GetRenderData()::GetFirstValidLODIdx doesn't return -1
-				LODResourcesArray[0].BuffersSize = 1;
-				//LODResourcesArray[0].IndexBuffer.TrySetAllowCPUAccess(false);
-
-			//}
-			*/
-
-			//TUniquePtr<FStaticMeshChunkStaticMesh->GetRenderData()> MChunkStaticMesh->GetRenderData() = MakeUnique<FStaticMeshRenderData>();
-			//MChunkStaticMesh->GetRenderData()->Bounds = Bounds.ToFBox();
-			//MChunkStaticMesh->GetRenderData()->NumInlinedLODs = 1;
-			  //ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr = MakePimpl<Nanite::FResources>(MoveTemp(Resources));
-			//MLODResourcesArray.Add(LODResource);
-			//MChunkStaticMesh->GetRenderData()->LODVertexFactories.Add(FStaticMeshVertexFactories(GMaxRHIFeatureLevel));
-			
-			
-			
-			//NaniteBuilder.ApplyChunkStaticMesh->GetRenderData()(*ChunkStaticMesh, MoveTemp(ChunkStaticMesh->GetRenderData()), bRaytracing, Collisions, ChaosMeshData);
-			
-			
-
-			
 			if (Collisions)
 			{
 				ChunkStaticMesh->CreateBodySetup();
@@ -751,33 +599,28 @@ void UChunkComponent::UploadChunk()
 				BodySetup->bSupportUVsAndFaceRemap = false;
 				BodySetup->CollisionTraceFlag = CTF_UseComplexAsSimple;
 
-				
-				ChaosMeshData->SetDoCollide(false);
+							
+				//ChaosMeshData->SetDoCollide(false);
 				BodySetup->TriMeshGeometries = { ChaosMeshData };
 
-				
-				BodySetup->BodySetupGuid           = FGuid::NewGuid();
+							
+				//BodySetup->BodySetupGuid           = FGuid::NewGuid();
 				BodySetup->bHasCookedCollisionData = true;
 				BodySetup->bCreatedPhysicsMeshes = true;
 			}
-			
-			
-			//ChunkStaticMesh->LODForCollision = 0;
-			//ChunkStaticMesh->bAllowCPUAccess = false;
+					
 			ChunkStaticMesh->SetRenderData(MoveTemp(RenderData));
 
-		#if WITH_EDITOR
+			#if WITH_EDITOR
 			ChunkStaticMesh->NaniteSettings.bEnabled = true;
-		#endif
+			#endif
 
 			ChunkStaticMesh->CalculateExtendedBounds();
 			ChunkStaticMesh->InitResources();
-			this->SetStaticMesh(ChunkStaticMesh);
-			
-			
+
 			
 			MaterialInst = this->CreateDynamicMaterialInstance(0, PlanetData->PlanetMaterial);
-			MaterialInst->SetTextureParameterValue("BiomeMap", RenderTarget);
+			MaterialInst->SetTextureParameterValue("BiomeMap", BiomeMap);
 			MaterialInst->SetTextureParameterValue("BiomeData", GPUBiomeData);
 			MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->maxRecursionLevel - recursionLevel);
 			MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
@@ -786,7 +629,7 @@ void UChunkComponent::UploadChunk()
 			MaterialInst->SetVectorParameterValue("ComponentLocation", ChunkLocation);
 			
 			
-			for (int i = 0; i < PlanetData->BiomeData.Num(); i++)
+			for (int i = 0; i < MaterialLayersNum; i++)
 			{
 				FMaterialParameterInfo LayerInfo;
 				LayerInfo.Name = "LayerIndex";
@@ -798,13 +641,13 @@ void UChunkComponent::UploadChunk()
 				BiomeCountInfo.Name = "BiomeCount";
 				BiomeCountInfo.Association = EMaterialParameterAssociation::BlendParameter;
 				BiomeCountInfo.Index = FMath::Max(i - 1,0);
-				MaterialInst->SetScalarParameterValueByInfo(BiomeCountInfo, float(PlanetData->BiomeData.Num()) + 0.01f);
+				MaterialInst->SetScalarParameterValueByInfo(BiomeCountInfo, float(MaterialLayersNum) + 0.01f);
 
 				FMaterialParameterInfo BlendInfo;
 				BlendInfo.Name = "BiomeMap";
 				BlendInfo.Association = EMaterialParameterAssociation::BlendParameter;
 				BlendInfo.Index = FMath::Max(i - 1,0);
-				MaterialInst->SetTextureParameterValueByInfo(BlendInfo, RenderTarget);
+				MaterialInst->SetTextureParameterValueByInfo(BlendInfo, BiomeMap);
 
 				FMaterialParameterInfo PlanetRadiusInfo;
 				PlanetRadiusInfo.Name = "PlanetRadius";
@@ -836,23 +679,26 @@ void UChunkComponent::UploadChunk()
 				RecursionInfo.Index = i;
 				MaterialInst->SetScalarParameterValueByInfo(RecursionInfo, PlanetData->maxRecursionLevel - recursionLevel);
 			}
-			this->RegisterComponent();
+			
+
 			if (GenerateFoliage)
 			{
 				UploadFoliageData();
 			}
 			
-
+			if (ChunkMinHeight < 0 && PlanetData->GenerateWater)
+			{
+				AddWaterChunk();
+			}
+			
+			this->SetStaticMesh(ChunkStaticMesh);
+			this->RegisterComponent();
+			
 			GenerationComplete();
+			
 		});
-		//});
 	}
 	
-}
-
-void UChunkComponent::SpawnMesh()
-{
-			
 }
 
 
@@ -862,6 +708,57 @@ void UChunkComponent::UploadFoliage()
 		UploadFoliageData();
 
 }
+
+
+void UChunkComponent::AddWaterChunk()
+{
+	FVector FaceDefaultForward = FVector(0, 0, 1);
+				
+	FVector InputDir = FVector(PlanetSpaceRotation);
+	InputDir = InputDir.GetSafeNormal();
+
+	// Compute the quaternion that rotates from the face's default forward to the input direction.
+	FQuat FaceRotation = FQuat::FindBetweenNormals(FaceDefaultForward, InputDir);
+	FTransform WaterTransform = FTransform(FaceRotation, ChunkLocation, FVector(ChunkSize / 100000, ChunkSize / 100000, ChunkSize / 100000));
+
+	FVector ChunkPositionOffset = PlanetSpaceLocation - ChunkLocation;
+
+	//spawn static mesh component for water chunk
+	WaterChunk = NewObject<UStaticMeshComponent>(GetOwner(), NAME_None, RF_Transient);
+	WaterChunk->SetupAttachment(GetOwner()->GetRootComponent());
+	WaterChunk->SetMobility(EComponentMobility::Movable);
+	WaterChunk->SetRelativeTransform(WaterTransform);
+	WaterChunk->SetCanEverAffectNavigation(false);
+	WaterChunk->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	WaterChunk->CastShadow = false;
+	WaterChunk->SetVisibleInRayTracing(false);
+	
+	if (recursionLevel != PlanetData->maxRecursionLevel)
+	{
+		WaterChunk->SetStaticMesh(FarWaterMesh);
+	}
+	else
+	{
+		WaterChunk->SetStaticMesh(CloseWaterMesh);
+	}
+
+	UMaterialInstanceDynamic* WaterMaterialInst;
+	if (recursionLevel >= PlanetData->RecursionLevelForMaterialChange)
+	{
+		WaterMaterialInst = WaterChunk->CreateDynamicMaterialInstance(0, PlanetData->CloseWaterMaterial);
+	}
+	else
+	{
+		WaterMaterialInst = WaterChunk->CreateDynamicMaterialInstance(0, PlanetData->FarWaterMaterial);
+	}
+	
+	WaterMaterialInst->SetTextureParameterValue("HeightMap", BiomeMap);
+	WaterMaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
+	WaterMaterialInst->SetVectorParameterValue("PositionOffset", UKismetMathLibrary::InverseTransformLocation(WaterTransform, ChunkPositionOffset));
+
+	WaterChunk->RegisterComponent();
+}
+
 
 void UChunkComponent::BeginSelfDestruct()
 {
@@ -877,24 +774,33 @@ void UChunkComponent::SelfDestruct()
 		ChunksToFinish->Remove(this);
 	}
 	
-	
+	//clear chunks to remove
 	for (int i = 0; i < ChunksToRemove.Num(); i++)
 	{
-			ChunksToRemove[i]->BeginSelfDestruct();
+		ChunksToRemove[i]->BeginSelfDestruct();
 	}
 	ChunksToRemove.Empty();
+
+	//clear foliage
 	for(int i = 0; i < FoliageRuntimeData.Num(); i++)
 	{
-		if (FoliageRuntimeData[i].hismc != nullptr)
+		if (FoliageRuntimeData[i].Ismc != nullptr)
 		{
-			FoliageRuntimeData[i].hismc->UnregisterComponent();
-			FoliageRuntimeData[i].hismc->ClearInstances();
-			//FoliageRuntimeData[i].hismc->GetBodySetup()->ConditionalBeginDestroy();
-			FoliageRuntimeData[i].hismc->DestroyComponent();
+			FoliageRuntimeData[i].Ismc->UnregisterComponent();
+			FoliageRuntimeData[i].Ismc->ClearInstances();
+			FoliageRuntimeData[i].Ismc->DestroyComponent();
 		}
 	}
 	FoliageRuntimeData.Empty();
 	FoliageBiomes.Empty();
+
+	//clear water
+	if (WaterChunk != nullptr)
+	{
+		WaterChunk->DestroyComponent();
+		WaterChunk = nullptr;
+	}
+	
 
 	//clear all arrays
 	Vertices.Empty();
@@ -905,29 +811,14 @@ void UChunkComponent::SelfDestruct()
 	Octahedrons.Empty();
 	UVs.Empty();
 	VertexColors.Empty();
-	VertexHeight.Empty();
 	ForestNoise.Empty();
 	RandomForest.Empty();
 
 	GPUBiomeData = nullptr;
-
-	//if (PCGComp != nullptr)
-	//{
-		//PCGComp->StopGenerationInProgress();
-		//PCGComp->DestroyComponent();
-	//}
 	
-	//UnregisterComponent();
 	SetStaticMesh(nullptr);
-
-	//if (IsRegistered())
-	//{
-	//	UnregisterComponent();
-	//}
 	
 	ChaosMeshData = nullptr;
-	//ChunkStaticMesh->ReleaseResources();
-	//delete ChunkStaticMesh->GetRenderData();
 
 	if (MaterialInst)
 	{
@@ -935,7 +826,7 @@ void UChunkComponent::SelfDestruct()
 		MaterialInst = nullptr;
 	}
 
-	
+	//clear static mesh
 	if (ChunkStaticMesh != nullptr)
 	{
 		if (ChunkStaticMesh->GetMaterial(0))
@@ -950,24 +841,22 @@ void UChunkComponent::SelfDestruct()
 
 		ChunkStaticMesh->ReleaseResources();
 		FlushRenderingCommands();
-		//ChunkStaticMesh->GetRenderData()->ReleaseResources();
 		ChunkStaticMesh->NaniteSettings.bEnabled = false;
-	//	ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr->ReleaseResources();
 		if (ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr.IsValid())
 		{
 			ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr->ReleaseResources();
 			ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr.Reset();
 		}
-		//ChunkStaticMesh->InitResources();
 
 		ChunkStaticMesh->MarkAsGarbage();
 		ChunkStaticMesh->ConditionalBeginDestroy();
 		ChunkStaticMesh = nullptr;
 	}
-	
-	if (RenderTarget != nullptr)
+
+	//clear biome map
+	if (BiomeMap != nullptr)
     {
-        RenderTarget->ConditionalBeginDestroy();
+        BiomeMap->ConditionalBeginDestroy();
     }
 	//ConditionalBeginDestroy();
 	ChunksToFinish = nullptr;

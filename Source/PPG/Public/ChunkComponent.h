@@ -22,7 +22,7 @@ struct FFoliageRuntimeDataS
 	GENERATED_BODY()
 	
 	UPROPERTY(VisibleDefaultsOnly)
-	UInstancedStaticMeshComponent* hismc = nullptr;
+	UInstancedStaticMeshComponent* Ismc = nullptr;
 
 	UPROPERTY(VisibleDefaultsOnly)
 	FFoliageListS Foliage;
@@ -80,9 +80,6 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
 	float FoliageDensityScale = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	float FarFoliageDensityScale = 10.0f;
 	
 
 	//UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -107,7 +104,7 @@ public:
 	void UploadFoliage();
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
-	void SpawnMesh();
+	void AddWaterChunk();
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
 	void GenerationComplete();
@@ -144,7 +141,7 @@ public:
 	FVector ChunkLocation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	float recursionLevel = 0;
+	int recursionLevel = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	int PlanetType = 0;
@@ -165,7 +162,7 @@ public:
 	FIntVector PlanetSpaceRotation;
 
 	UPROPERTY()
-	UTextureRenderTarget2D* RenderTarget;
+	UTextureRenderTarget2D* BiomeMap;
 
 	UPROPERTY()
 	UChunkComponent* ParentChunk;
@@ -182,23 +179,19 @@ public:
 	UPROPERTY()
 	bool AbortAsync = false;
 
-	//UPROPERTY(EditAnywhere)
-	TArray<uint32>* Triangles;
+	UPROPERTY()
+	uint8 MaterialLayersNum = 0;
+
+	UPROPERTY()
+	UStaticMesh* FarWaterMesh;
+
+	UPROPERTY()
+	UStaticMesh* CloseWaterMesh;
 
 
-	//UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	//UStaticMesh* FoliageStaticMesh;
+
 	
-
-	//virtual void BeginPlay() override;
-	//event tick
-	//virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-
-	/** Allows Tick To happen in the editor viewport*/
-	//irtual bool ShouldTickIfViewportsOnly() const;
-
-	//UPROPERTY(BlueprintReadWrite, EditAnywhere)
-	//bool UseEditorTick = false;
+	TArray<uint32>* Triangles;
 
 
 protected:
@@ -240,6 +233,9 @@ private:
 
 	UPROPERTY()
 	bool Collisions = false;
+
+	UPROPERTY()
+	UStaticMeshComponent* WaterChunk;
 	
 	TUniquePtr<FStaticMeshRenderData> RenderData;
 	//Nanite::FResources Resources;

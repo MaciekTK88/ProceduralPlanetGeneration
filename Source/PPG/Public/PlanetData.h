@@ -30,21 +30,15 @@ struct FBiomeDataS
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	uint8 TerrainCurveIndex = 0;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	uint8 MaterialLayerIndex = 0;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FoliageSetup")
 	UFoliageData* FoliageData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	uint8 GroundTextureIndex = 0;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	uint8 SlopeTextureIndex = 0;
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
 	bool GenerateForest = true;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
-	uint8 ForestTextureIndex = 0;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
 	UFoliageData* ForestFoliageData;

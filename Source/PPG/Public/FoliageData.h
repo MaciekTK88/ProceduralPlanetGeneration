@@ -22,16 +22,16 @@ struct FFoliageListS
 	float FoliageDensity;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float FoliageDistance;
+	int FoliageDistance;
 
 	//UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	//float FoliageStartDistance;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	int maxScale;
+	float maxScale;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	int minScale;
+	float minScale;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float CullingDistance;
@@ -52,10 +52,10 @@ struct FFoliageListS
 	bool FarFoliageWPO = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float MinHeight = 5980000.0f;
+	float MinHeight = 0.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float MaxHeight = 6050000.0f;
+	float MaxHeight = 600000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool isSlopeFoliage = false;
@@ -67,10 +67,10 @@ struct FFoliageListS
 	UStaticMesh* LowPolyMesh;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float LowPolyActivation;
+	int LowPolyActivation;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	bool FarFoliageDensityBoost = false;
+	float FarFoliageDensityScale = 1;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool ScalableDensity = false;
