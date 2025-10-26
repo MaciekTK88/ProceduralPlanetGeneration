@@ -161,7 +161,10 @@ public:
 	bool GenerateFoliage = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool GenerateRayTracingProxy = false;
+	bool GenerateRayTracingProxy = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
+	int CollisionDisableDistance = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	bool AsyncInitBody = false;
@@ -199,7 +202,7 @@ public:
 	UPROPERTY()
 	TArray<uint32> Triangles;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY(BlueprintReadWrite)
 	bool ready = false;
 
 	UPROPERTY()

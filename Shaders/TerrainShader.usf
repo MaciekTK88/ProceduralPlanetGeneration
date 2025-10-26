@@ -55,7 +55,7 @@ TerrainData GetTerrainData(float3 planetPos, float3 normalizedPlanetPos)
 
     if (ReadBiomeDataTexture(terrainData.biomeIndex, 3) >= 0.95) // Check if biome is forest biome
     {
-        terrainData.forestNoise = uint(saturate((fbmE(planetPos * 20, 3, 1.0) - 0.75) * 10) * 255);
+        terrainData.forestNoise = uint(saturate((fbmE(shiftedPos * 80, 3, 1.0) - 0.6) * 5) * 255);
     }
 
 

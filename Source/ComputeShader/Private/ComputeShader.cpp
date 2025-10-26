@@ -18,7 +18,7 @@ void FComputeShader::StartupModule()
 {
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 
-	const FString ShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("PPG"))->GetBaseDir(), TEXT("Shaders/ComputeShader/Private"));
+	const FString ShaderDir = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("PPG"))->GetBaseDir(), TEXT("Shaders"));
 	AddShaderSourceDirectoryMapping(TEXT("/ComputeShaderShaders"), ShaderDir);
 
 #if WITH_EDITOR

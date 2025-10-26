@@ -138,7 +138,7 @@ void UChunkComponent::GenerateChunk()
 	{
 		bRaytracing = true;
 	}
-	if (GenerateCollisions && recursionLevel >= PlanetData->maxRecursionLevel - 3)
+	if (GenerateCollisions && recursionLevel >= PlanetData->maxRecursionLevel - CollisionDisableDistance)
 	{
 		Collisions = true;
 	}
@@ -183,7 +183,7 @@ void UChunkComponent::GenerateChunk()
 	VertexHeight.Reserve(VerticesAmount * VerticesAmount);
 	Slopes.Reserve(VerticesAmount * VerticesAmount);
 	Biomes.Reserve(VerticesAmount * VerticesAmount);
-	ForestNoise.Reserve(VerticesAmount * VerticesAmount);
+	ForestVertices.Reserve(VerticesAmount * VerticesAmount);
 	
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](TArray<float> OutputVal, TArray<uint8> OutputVCVal) {
 		//this->Completed.Broadcast(OutputVal);
@@ -229,23 +229,33 @@ void UChunkComponent::GenerateChunk()
 					//FVector PlanetSpaceVertex = PlanetData->PlanetTransformLocation(ChunkLocation, PlanetSpaceRotation,FVector(Vertex));
 					//uint8 CurrentRandomForest = uint8(((FMath::PerlinNoise3D((FVector(Vertex) + ChunkLocation) * 0.0002) + 1) / 2) * 180);//HashFVectorToVector2D(FVector(PlanetSpaceVertex),0,120).X);
 					//RandomForest.Add(CurrentRandomForest);
+					bool ForestVertex = false;
 
-					if ((ShaderForestNoise <= 128 || noiseheight > PlanetData->BiomeData[BiomeIndex].ForestHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
+					if (PlanetData->BiomeData[BiomeIndex].GenerateForest == true && PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
+					{
+						float VertexRandom = HashFVectorToVector2D(FVector(Vertex), 0, 255).X;
+						if ((ShaderForestNoise <= VertexRandom || noiseheight > PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MaxHeight || noiseheight < PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MinHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
+						{
+							FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
+							ShaderForestNoise = 0;
+						}
+						else if (PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
+						{
+							FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].ForestFoliageData);
+							ForestVertex = true;
+						}
+					}
+					else
 					{
 						FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
 						ShaderForestNoise = 0;
 					}
-					else if (PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
-					{
-						FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].ForestFoliageData);
-					}
-					
 					VertexColors.Add(FColor(OutputVCVal[(x + y * VerticesAmount) * 3], ShaderForestNoise, BiomeIndex, 0));
 					
 					VertexHeight.Add(noiseheight);
 					Slopes.Add(0);
 					Biomes.Add(BiomeIndex);
-					ForestNoise.Add(ShaderForestNoise);
+					ForestVertices.Add(ForestVertex);
 					
 				}
 			}
@@ -417,12 +427,12 @@ void UChunkComponent::CompleteChunkGeneration()
 
 								bool ShouldSpawn = true;
 								
-								if (ForestNoise[vertexIndex] > 128 && PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageBiomes[x])
+								if (ForestVertices[vertexIndex] == true && PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageBiomes[x])
 								{
 									ShouldSpawn = false;
 								}
 
-								if (ForestNoise[vertexIndex] <= 128 && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageBiomes[x])
+								if (ForestVertices[vertexIndex] == false && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageBiomes[x])
 								{
 									ShouldSpawn = false;
 								}
@@ -567,7 +577,7 @@ void UChunkComponent::UploadChunk()
 		// Generate the render data
 		TVoxelArray<int32> VertexOffsets;
 		TVoxelArray<int32> ClusteredIndices;
-		RenderData = NaniteBuilder.CreateRenderData(VertexOffsets, ClusteredIndices, bRaytracing);
+		RenderData = NaniteBuilder.CreateRenderData(bRaytracing);
 		
 
 		if (AbortAsync == true)
@@ -811,7 +821,7 @@ void UChunkComponent::SelfDestruct()
 	Octahedrons.Empty();
 	UVs.Empty();
 	VertexColors.Empty();
-	ForestNoise.Empty();
+	ForestVertices.Empty();
 	RandomForest.Empty();
 
 	GPUBiomeData = nullptr;

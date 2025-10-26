@@ -29,7 +29,7 @@ public:
 	SHADER_USE_PARAMETER_STRUCT(FPlanetComputeShader, FGlobalShader);
 	
 	
-	class FPlanetComputeShader_Perm_TEST : SHADER_PERMUTATION_INT("PlanetType", 2);
+	class FPlanetComputeShader_Perm_TEST : SHADER_PERMUTATION_INT("PlanetType", 4);
 	using FPermutationDomain = TShaderPermutationDomain<
 		FPlanetComputeShader_Perm_TEST
 	>;

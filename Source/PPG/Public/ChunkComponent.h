@@ -73,6 +73,9 @@ public:
 	bool GenerateRayTracingProxy = true;
 
 	UPROPERTY()
+	int CollisionDisableDistance = 3;
+
+	UPROPERTY()
 	bool GenerateFoliage = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
@@ -218,7 +221,7 @@ private:
 	UPROPERTY()
 	TArray<uint8> Biomes;
 	UPROPERTY()
-	TArray<uint8> ForestNoise;
+	TArray<bool> ForestVertices;
 	UPROPERTY()
 	TArray<uint8> RandomForest;
 

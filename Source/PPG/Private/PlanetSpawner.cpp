@@ -486,6 +486,7 @@ void FChunkTree::GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FV
 				Chunk->GenerateCollisions = planet->GenerateCollisions;
 				Chunk->GenerateFoliage = planet->GenerateFoliage;
 				Chunk->GenerateRayTracingProxy = planet->GenerateRayTracingProxy;
+				Chunk->CollisionDisableDistance = planet->CollisionDisableDistance;
 				Chunk->FoliageDensityScale = planet->GlobalFoliageDensityScale;
 				Chunk->GPUBiomeData = planet->GPUBiomeData;
 				Chunk->MaterialLayersNum = planet->MaterialLayersNum;

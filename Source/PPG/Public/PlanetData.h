@@ -43,8 +43,8 @@ struct FBiomeDataS
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
 	UFoliageData* ForestFoliageData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
-	float ForestHeight = 100000;
+	//UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
+	//float ForestHeight = 100000;
 };
 
 /*
