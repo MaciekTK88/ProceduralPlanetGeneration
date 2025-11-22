@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+
 #include "ComputeShader/Public/PlanetComputeShader/PlanetComputeShader.h"
 #include "PixelShaderUtils.h"
 #include "MeshPassProcessor.inl"

@@ -1,3 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
 
 #include "PlanetData.h"

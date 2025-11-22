@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
 
 #include "ChunkComponent.h"
 #include "Engine/GameEngine.h"
@@ -6,15 +6,13 @@
 #include "Async/Async.h"
 #include "Kismet/GameplayStatics.h"
 //#include "RealtimeMeshSimple.h"
+#include <MeshCardBuild.h>
+
 #include "Kismet/KismetMathLibrary.h"
 #include "PlanetNaniteBuilder.h"
 #include "VoxelMinimal.h"
-//#include "ProceduralMeshComponent.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "PhysicsEngine/BodySetup.h"
-//#include "Components/HierarchicalInstancedStaticMeshComponent.h"
-#include <MeshCardBuild.h>
-
 #include "VoxelChaosTriangleMeshCooker.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "StaticMeshResources.h"
@@ -23,30 +21,41 @@
 
 UChunkComponent::UChunkComponent()
 {
-		PrimaryComponentTick.bCanEverTick = false;
-		PrimaryComponentTick.bStartWithTickEnabled = false;
+	
 }
 
-// Called when the game starts
-void UChunkComponent::BeginPlay()
-{
-	
-	Super::BeginPlay();
-	// ...
-}
 
 
 void UChunkComponent::GenerationComplete()
 {
 	if (IsInGameThread())
 	{
-		ChunksToFinish->Add(this);
+		//ChunksToFinish->Add(this);
+		if (AbortAsync == false)
+		{
+			AssignComponents();
+			ChunkStatus = EChunkStatus::READY;
+		}
+		else
+		{
+			ChunkStatus = EChunkStatus::ABORTED;
+		}
+
 	}
 	else
 	{
 		AsyncTask(ENamedThreads::GameThread, [this]()
 		{
-			ChunksToFinish->Add(this);
+			//ChunksToFinish->Add(this);
+			if (AbortAsync == false)
+			{
+				AssignComponents();
+				ChunkStatus = EChunkStatus::READY;
+			}
+			else
+			{
+				ChunkStatus = EChunkStatus::ABORTED;
+			}
 		});
 	}
 }
@@ -65,18 +74,27 @@ void UChunkComponent::UploadFoliageData()
 		if (GenerateFoliage == true && FoliageRuntimeData[i].LocalFoliageTransforms.Num() > 0)
 		{
 			UInstancedStaticMeshComponent* Ismc;
-			Ismc = NewObject<UInstancedStaticMeshComponent>(FoliageActor, NAME_None, RF_Transient);
-			Ismc->SetupAttachment(FoliageActor->GetRootComponent());
-			Ismc->SetMobility(EComponentMobility::Movable);
-			Ismc->SetGenerateOverlapEvents(false);
-			Ismc->WorldPositionOffsetDisableDistance = FoliageRuntimeData[i].Foliage.WPODisableDistance;
-			Ismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.WPO);
-			Ismc->bAffectDistanceFieldLighting = false;
-			Ismc->InstanceEndCullDistance = FoliageRuntimeData[i].Foliage.CullingDistance;
-			Ismc->bWorldPositionOffsetWritesVelocity = FoliageRuntimeData[i].Foliage.WPO;
-			Ismc->bDisableCollision = true;
-			Ismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
-			Ismc->SetCanEverAffectNavigation(false);
+			/*if ((*FoliageISMCPool).IsEmpty() == false)
+			{
+				Ismc = (*FoliageISMCPool).Pop();
+				Ismc->SetVisibility(true);
+			}
+			else
+			{*/
+				Ismc = NewObject<UInstancedStaticMeshComponent>(FoliageActor, NAME_None, RF_Transient);
+				Ismc->SetupAttachment(FoliageActor->GetRootComponent());
+				Ismc->SetMobility(EComponentMobility::Movable);
+				Ismc->SetGenerateOverlapEvents(false);
+				Ismc->WorldPositionOffsetDisableDistance = FoliageRuntimeData[i].Foliage.WPODisableDistance;
+				Ismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.WPO);
+				Ismc->bAffectDistanceFieldLighting = false;
+				Ismc->InstanceEndCullDistance = FoliageRuntimeData[i].Foliage.CullingDistance;
+				Ismc->bWorldPositionOffsetWritesVelocity = FoliageRuntimeData[i].Foliage.WPO;
+				Ismc->bDisableCollision = true;
+				Ismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
+				Ismc->SetCanEverAffectNavigation(false);
+			//}
+
 
 
 			if (FoliageRuntimeData[i].Foliage.ShadowDisableDistance <= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.ShadowDisableDistance != 0)
@@ -106,7 +124,7 @@ void UChunkComponent::UploadFoliageData()
 			}
 
 			//hismc->bIsAsyncBuilding = true;
-			Ismc->SetRelativeTransform(FTransform(GetRelativeRotation(), ChunkLocation, FVector(1.0f, 1.0f, 1.0f)));
+			Ismc->SetRelativeTransform(FTransform(ChunkSMC->GetRelativeRotation(), ChunkLocation, FVector(1.0f, 1.0f, 1.0f)));
 			Ismc->AddInstances(FoliageRuntimeData[i].LocalFoliageTransforms, false, false, false);
 			Ismc->RegisterComponent();
 			FoliageRuntimeData[i].Ismc = Ismc;
@@ -118,6 +136,8 @@ void UChunkComponent::UploadFoliageData()
 
 void UChunkComponent::GenerateChunk()
 {
+	ChunkStatus = EChunkStatus::GENERATING;
+	
 	//clear all arrays
 	Vertices.Empty();
 	Normals.Empty();
@@ -186,9 +206,7 @@ void UChunkComponent::GenerateChunk()
 	ForestVertices.Reserve(VerticesAmount * VerticesAmount);
 	
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](TArray<float> OutputVal, TArray<uint8> OutputVCVal) {
-		//this->Completed.Broadcast(OutputVal);
-		//print OutputVal
-		//GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Yellow, FString::Printf(TEXT("OutputVal = %f"), OutputVal[1]));
+
 		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [this, OutputVal, OutputVCVal]()
 		{
 			if (AbortAsync == true)
@@ -222,18 +240,16 @@ void UChunkComponent::GenerateChunk()
 						ChunkMinHeight = noiseheight;
 					}
 
-
-					//uint8 Temperature = OutputVCVal[(x + y * VerticesAmount) * 3 + 1];
+					
 					uint8 BiomeIndex = OutputVCVal[(x + y * VerticesAmount) * 3 + 2];
 					uint8 ShaderForestNoise = OutputVCVal[(x + y * VerticesAmount) * 3 + 1];
-					//FVector PlanetSpaceVertex = PlanetData->PlanetTransformLocation(ChunkLocation, PlanetSpaceRotation,FVector(Vertex));
-					//uint8 CurrentRandomForest = uint8(((FMath::PerlinNoise3D((FVector(Vertex) + ChunkLocation) * 0.0002) + 1) / 2) * 180);//HashFVectorToVector2D(FVector(PlanetSpaceVertex),0,120).X);
-					//RandomForest.Add(CurrentRandomForest);
+
 					bool ForestVertex = false;
 
 					if (PlanetData->BiomeData[BiomeIndex].GenerateForest == true && PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
 					{
-						float VertexRandom = HashFVectorToVector2D(FVector(Vertex), 0, 255).X;
+						float VertexRandom = HashFVectorToVector2D(FVector(Vertex) + ChunkLocation, 0, 255, Size * 2.0f).X;
+						//float VertexRandom = (FMath::PerlinNoise3D((FVector(Vertex) + ChunkLocation) * 0.001f) + 1) / 2.0f * 255.0f;
 						if ((ShaderForestNoise <= VertexRandom || noiseheight > PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MaxHeight || noiseheight < PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MinHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
 						{
 							FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
@@ -406,14 +422,7 @@ void UChunkComponent::CompleteChunkGeneration()
 								//uint32 SeedValue = FCrc::MemCrc32(&NormalizedfoliageLocation, sizeof(FVector));
 								FRandomStream ScaleStream((int)(NormalizedfoliageLocation.X / 10000) + (int)(NormalizedfoliageLocation.Y / 10000) + (int)(NormalizedfoliageLocation.Z / 10000));
 
-								NormalizedfoliageLocation = FVector(
-								FMath::RoundToFloat(NormalizedfoliageLocation.X / 10),
-								FMath::RoundToFloat(NormalizedfoliageLocation.Y / 10),
-								FMath::RoundToFloat(NormalizedfoliageLocation.Z / 10)
-								);
-								
-
-								FVector2d NewLocalPos = HashFVectorToVector2D(NormalizedfoliageLocation + x * 100 + i * 100, 0.0f, minchunkSize);
+								FVector2d NewLocalPos = HashFVectorToVector2D(NormalizedfoliageLocation + x * 100 + i * 100, 0.0f, minchunkSize, 10.0f);
 								NewLocalPos += FVector2d((int)((xlocalpos / minchunkSize)) * minchunkSize, (int)((ylocalpos / minchunkSize)) * minchunkSize);
 								
 								
@@ -526,11 +535,8 @@ void UChunkComponent::CompleteChunkGeneration()
 				}
 			}
 		}
-
-		//ChunksToUpload->Add(this);
-		//DataGenerated = true;
+	
 		UploadChunk();
-
 
 }
 
@@ -543,8 +549,6 @@ void UChunkComponent::UploadChunk()
 
 		//convert vertices to Positions
 		TConstVoxelArrayView<FVector3f> Positions(Vertices.GetData(), Vertices.Num());
-		
-		//TConstVoxelArrayView<FVoxelOctahedron> Octahedron(Octahedrons.GetData(), Vertices.Num());
 
 		TConstVoxelArrayView<FVector2f> TextureCoordinatesV(UVs.GetData(), UVs.Num());
 
@@ -553,21 +557,17 @@ void UChunkComponent::UploadChunk()
 		TArray<int32> IntTriangles = TArray<int32>((*Triangles));
 
 		TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
-
-		FPlanetNaniteBuilder NaniteBuilder;
+		
 		NaniteBuilder.PositionPrecision = -(PlanetData->maxRecursionLevel - recursionLevel) + 3;
 		NaniteBuilder.Mesh.Indices = Indices;
 		NaniteBuilder.Mesh.Positions = Positions;
 		NaniteBuilder.bCompressVertices = true;
-		//NaniteBuilder.Mesh.Positions3f = &Vertices;
 		NaniteBuilder.Mesh.Normals = Octahedrons;
-		//NaniteBuilder.Mesh.Normals3f = &Normals;
 		NaniteBuilder.Mesh.Colors = VertexColors;
 		NaniteBuilder.Mesh.TextureCoordinates = TextureCoordinatesVV;
-		//NaniteBuilder.TrianglesM = Triangles;
 		
 		
-
+		Chaos::FTriangleMeshImplicitObjectPtr ChaosMeshData;
 		if (Collisions)
 		{
 			TConstVoxelArrayView<uint16> FaceMaterials;
@@ -577,7 +577,7 @@ void UChunkComponent::UploadChunk()
 		// Generate the render data
 		TVoxelArray<int32> VertexOffsets;
 		TVoxelArray<int32> ClusteredIndices;
-		RenderData = NaniteBuilder.CreateRenderData(bRaytracing);
+		RenderData = NaniteBuilder.CreateRenderData(AbortAsync, bRaytracing);
 		
 
 		if (AbortAsync == true)
@@ -588,8 +588,14 @@ void UChunkComponent::UploadChunk()
 		
 		
 		
-		AsyncTask(ENamedThreads::GameThread, [this]()
+		AsyncTask(ENamedThreads::GameThread, [this, ChaosMeshData]()
 		{
+			if (AbortAsync == true)
+			{
+				GenerationComplete();
+				return;
+			}
+			
 			ChunkStaticMesh = NewObject<UStaticMesh>(this, NAME_None, RF_Transient);
 			ChunkStaticMesh->bDoFastBuild = true;
 			ChunkStaticMesh->bGenerateMeshDistanceField = false;
@@ -627,82 +633,7 @@ void UChunkComponent::UploadChunk()
 
 			ChunkStaticMesh->CalculateExtendedBounds();
 			ChunkStaticMesh->InitResources();
-
 			
-			MaterialInst = this->CreateDynamicMaterialInstance(0, PlanetData->PlanetMaterial);
-			MaterialInst->SetTextureParameterValue("BiomeMap", BiomeMap);
-			MaterialInst->SetTextureParameterValue("BiomeData", GPUBiomeData);
-			MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->maxRecursionLevel - recursionLevel);
-			MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
-			MaterialInst->SetScalarParameterValue("NoiseHeight", PlanetData->noiseHeight);
-			MaterialInst->SetScalarParameterValue("ChunkSize", ChunkSize);
-			MaterialInst->SetVectorParameterValue("ComponentLocation", ChunkLocation);
-			
-			
-			for (int i = 0; i < MaterialLayersNum; i++)
-			{
-				FMaterialParameterInfo LayerInfo;
-				LayerInfo.Name = "LayerIndex";
-				LayerInfo.Association = EMaterialParameterAssociation::BlendParameter;
-				LayerInfo.Index = FMath::Max(i - 1,0);
-				MaterialInst->SetScalarParameterValueByInfo(LayerInfo, i + 0.01f);
-
-				FMaterialParameterInfo BiomeCountInfo;
-				BiomeCountInfo.Name = "BiomeCount";
-				BiomeCountInfo.Association = EMaterialParameterAssociation::BlendParameter;
-				BiomeCountInfo.Index = FMath::Max(i - 1,0);
-				MaterialInst->SetScalarParameterValueByInfo(BiomeCountInfo, float(MaterialLayersNum) + 0.01f);
-
-				FMaterialParameterInfo BlendInfo;
-				BlendInfo.Name = "BiomeMap";
-				BlendInfo.Association = EMaterialParameterAssociation::BlendParameter;
-				BlendInfo.Index = FMath::Max(i - 1,0);
-				MaterialInst->SetTextureParameterValueByInfo(BlendInfo, BiomeMap);
-
-				FMaterialParameterInfo PlanetRadiusInfo;
-				PlanetRadiusInfo.Name = "PlanetRadius";
-				PlanetRadiusInfo.Association = EMaterialParameterAssociation::LayerParameter;
-				PlanetRadiusInfo.Index = i;
-				MaterialInst->SetScalarParameterValueByInfo(PlanetRadiusInfo, PlanetData->PlanetRadius);
-
-				FMaterialParameterInfo NoiseHeightInfo;
-				NoiseHeightInfo.Name = "NoiseHeight";
-				NoiseHeightInfo.Association = EMaterialParameterAssociation::LayerParameter;
-				NoiseHeightInfo.Index = i;
-				MaterialInst->SetScalarParameterValueByInfo(NoiseHeightInfo, PlanetData->noiseHeight);
-
-				FMaterialParameterInfo ChunkSizeInfo;
-				ChunkSizeInfo.Name = "ChunkSize";
-				ChunkSizeInfo.Association = EMaterialParameterAssociation::LayerParameter;
-				ChunkSizeInfo.Index = i;
-				MaterialInst->SetScalarParameterValueByInfo(ChunkSizeInfo, ChunkSize);
-
-				FMaterialParameterInfo LocationInfo;
-				LocationInfo.Name = "ComponentLocation";
-				LocationInfo.Association = EMaterialParameterAssociation::LayerParameter;
-				LocationInfo.Index = i;
-				MaterialInst->SetVectorParameterValueByInfo(LocationInfo, ChunkLocation);
-
-				FMaterialParameterInfo RecursionInfo;
-				RecursionInfo.Name = "recursionLevel";
-				RecursionInfo.Association = EMaterialParameterAssociation::LayerParameter;
-				RecursionInfo.Index = i;
-				MaterialInst->SetScalarParameterValueByInfo(RecursionInfo, PlanetData->maxRecursionLevel - recursionLevel);
-			}
-			
-
-			if (GenerateFoliage)
-			{
-				UploadFoliageData();
-			}
-			
-			if (ChunkMinHeight < 0 && PlanetData->GenerateWater)
-			{
-				AddWaterChunk();
-			}
-			
-			this->SetStaticMesh(ChunkStaticMesh);
-			this->RegisterComponent();
 			
 			GenerationComplete();
 			
@@ -711,13 +642,113 @@ void UChunkComponent::UploadChunk()
 	
 }
 
-
-void UChunkComponent::UploadFoliage()
+void UChunkComponent::AssignComponents()
 {
 	
-		UploadFoliageData();
+	if ((*ChunkSMCPool).IsEmpty() == false)
+	{
+		//get avaliable ChunkSMC
+		ChunkSMC = (*ChunkSMCPool).Pop();
+		ChunkSMC->SetRelativeLocation(ChunkLocation);
+		ChunkSMC->GetComponentVelocity() = FVector::ZeroVector;
+		ChunkSMC->ResetSceneVelocity();
+		ChunkSMC->SetVisibility(true);
+	}
+	else
+	{
+		ChunkSMC = NewObject<UStaticMeshComponent>(this, UStaticMeshComponent::StaticClass(), NAME_None, RF_Transient);
+		ChunkSMC->SetupAttachment(Cast<AActor>(GetOuter())->GetRootComponent());
+		ChunkSMC->SetMobility(EComponentMobility::Movable);
+		ChunkSMC->SetCanEverAffectNavigation(false);
+		ChunkSMC->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
+		ChunkSMC->bWorldPositionOffsetWritesVelocity = false;
+		ChunkSMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		ChunkSMC->SetRelativeLocation(ChunkLocation);
+		ChunkSMC->GetComponentVelocity() = FVector::ZeroVector;
+		ChunkSMC->ResetSceneVelocity();
+	}
 
+
+
+
+	
+	MaterialInst = ChunkSMC->CreateDynamicMaterialInstance(0, PlanetData->PlanetMaterial);
+	MaterialInst->SetTextureParameterValue("BiomeMap", BiomeMap);
+	MaterialInst->SetTextureParameterValue("BiomeData", GPUBiomeData);
+	MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->maxRecursionLevel - recursionLevel);
+	MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
+	MaterialInst->SetScalarParameterValue("NoiseHeight", PlanetData->noiseHeight);
+	MaterialInst->SetScalarParameterValue("ChunkSize", ChunkSize);
+	MaterialInst->SetVectorParameterValue("ComponentLocation", ChunkLocation);
+	
+	
+	for (int i = 0; i < MaterialLayersNum; i++)
+	{
+		FMaterialParameterInfo LayerInfo;
+		LayerInfo.Name = "LayerIndex";
+		LayerInfo.Association = EMaterialParameterAssociation::BlendParameter;
+		LayerInfo.Index = FMath::Max(i - 1,0);
+		MaterialInst->SetScalarParameterValueByInfo(LayerInfo, i + 0.01f);
+
+		FMaterialParameterInfo BiomeCountInfo;
+		BiomeCountInfo.Name = "BiomeCount";
+		BiomeCountInfo.Association = EMaterialParameterAssociation::BlendParameter;
+		BiomeCountInfo.Index = FMath::Max(i - 1,0);
+		MaterialInst->SetScalarParameterValueByInfo(BiomeCountInfo, float(MaterialLayersNum) + 0.01f);
+
+		FMaterialParameterInfo BlendInfo;
+		BlendInfo.Name = "BiomeMap";
+		BlendInfo.Association = EMaterialParameterAssociation::BlendParameter;
+		BlendInfo.Index = FMath::Max(i - 1,0);
+		MaterialInst->SetTextureParameterValueByInfo(BlendInfo, BiomeMap);
+
+		FMaterialParameterInfo PlanetRadiusInfo;
+		PlanetRadiusInfo.Name = "PlanetRadius";
+		PlanetRadiusInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		PlanetRadiusInfo.Index = i;
+		MaterialInst->SetScalarParameterValueByInfo(PlanetRadiusInfo, PlanetData->PlanetRadius);
+
+		FMaterialParameterInfo NoiseHeightInfo;
+		NoiseHeightInfo.Name = "NoiseHeight";
+		NoiseHeightInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		NoiseHeightInfo.Index = i;
+		MaterialInst->SetScalarParameterValueByInfo(NoiseHeightInfo, PlanetData->noiseHeight);
+
+		FMaterialParameterInfo ChunkSizeInfo;
+		ChunkSizeInfo.Name = "ChunkSize";
+		ChunkSizeInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		ChunkSizeInfo.Index = i;
+		MaterialInst->SetScalarParameterValueByInfo(ChunkSizeInfo, ChunkSize);
+
+		FMaterialParameterInfo LocationInfo;
+		LocationInfo.Name = "ComponentLocation";
+		LocationInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		LocationInfo.Index = i;
+		MaterialInst->SetVectorParameterValueByInfo(LocationInfo, ChunkLocation);
+
+		FMaterialParameterInfo RecursionInfo;
+		RecursionInfo.Name = "recursionLevel";
+		RecursionInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		RecursionInfo.Index = i;
+		MaterialInst->SetScalarParameterValueByInfo(RecursionInfo, PlanetData->maxRecursionLevel - recursionLevel);
+	}
+	
+
+	if (GenerateFoliage)
+	{
+		UploadFoliageData();
+	}
+	
+	if (ChunkMinHeight < 0 && PlanetData->GenerateWater)
+	{
+		AddWaterChunk();
+	}
+	ChunkSMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	ChunkSMC->SetStaticMesh(ChunkStaticMesh);
+	ChunkSMC->ResetSceneVelocity();
+	ChunkSMC->RegisterComponent();
 }
+
 
 
 void UChunkComponent::AddWaterChunk()
@@ -733,26 +764,44 @@ void UChunkComponent::AddWaterChunk()
 
 	FVector ChunkPositionOffset = PlanetSpaceLocation - ChunkLocation;
 
-	//spawn static mesh component for water chunk
-	WaterChunk = NewObject<UStaticMeshComponent>(GetOwner(), NAME_None, RF_Transient);
-	WaterChunk->SetupAttachment(GetOwner()->GetRootComponent());
-	WaterChunk->SetMobility(EComponentMobility::Movable);
-	WaterChunk->SetRelativeTransform(WaterTransform);
-	WaterChunk->SetCanEverAffectNavigation(false);
-	WaterChunk->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	WaterChunk->CastShadow = false;
-	WaterChunk->SetVisibleInRayTracing(false);
-	
-	if (recursionLevel != PlanetData->maxRecursionLevel)
+	if (WaterSMCPool->IsEmpty() == false)
 	{
-		WaterChunk->SetStaticMesh(FarWaterMesh);
+		WaterChunk = WaterSMCPool->Pop();
+		WaterChunk->SetVisibility(true);
 	}
 	else
 	{
-		WaterChunk->SetStaticMesh(CloseWaterMesh);
+		//spawn static mesh component for water chunk
+		WaterChunk = NewObject<UStaticMeshComponent>(GetOuter(), NAME_None, RF_Transient);
+		WaterChunk->SetupAttachment(Cast<AActor>(GetOuter())->GetRootComponent());
+		WaterChunk->SetRenderCustomDepth(true);
+		WaterChunk->SetMobility(EComponentMobility::Movable);
+		WaterChunk->SetCanEverAffectNavigation(false);
+		WaterChunk->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		WaterChunk->CastShadow = false;
+		WaterChunk->SetVisibleInRayTracing(false);
+		WaterChunk->RegisterComponent();
+	}
+	WaterChunk->SetRelativeTransform(WaterTransform);
+	WaterChunk->ResetSceneVelocity();
+	
+	
+	if (recursionLevel != PlanetData->maxRecursionLevel)
+	{
+		if (WaterChunk->GetStaticMesh() != FarWaterMesh)
+		{
+			WaterChunk->SetStaticMesh(FarWaterMesh);
+		}
+	}
+	else
+	{
+		if (WaterChunk->GetStaticMesh() != CloseWaterMesh)
+		{
+			WaterChunk->SetStaticMesh(CloseWaterMesh);
+		}
 	}
 
-	UMaterialInstanceDynamic* WaterMaterialInst;
+	
 	if (recursionLevel >= PlanetData->RecursionLevelForMaterialChange)
 	{
 		WaterMaterialInst = WaterChunk->CreateDynamicMaterialInstance(0, PlanetData->CloseWaterMaterial);
@@ -765,75 +814,23 @@ void UChunkComponent::AddWaterChunk()
 	WaterMaterialInst->SetTextureParameterValue("HeightMap", BiomeMap);
 	WaterMaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
 	WaterMaterialInst->SetVectorParameterValue("PositionOffset", UKismetMathLibrary::InverseTransformLocation(WaterTransform, ChunkPositionOffset));
-
-	WaterChunk->RegisterComponent();
 }
 
-
-void UChunkComponent::BeginSelfDestruct()
+void UChunkComponent::FreeComponents()
 {
-	AbortAsync = true;
-	ChunksToRemoveQueue->Add(this);
-	
-}
-
-void UChunkComponent::SelfDestruct()
-{
-	if (ChunksToFinish != nullptr)
+	//Add components to pools
+	if (ChunkSMC != nullptr)
 	{
-		ChunksToFinish->Remove(this);
-	}
-	
-	//clear chunks to remove
-	for (int i = 0; i < ChunksToRemove.Num(); i++)
-	{
-		ChunksToRemove[i]->BeginSelfDestruct();
-	}
-	ChunksToRemove.Empty();
-
-	//clear foliage
-	for(int i = 0; i < FoliageRuntimeData.Num(); i++)
-	{
-		if (FoliageRuntimeData[i].Ismc != nullptr)
-		{
-			FoliageRuntimeData[i].Ismc->UnregisterComponent();
-			FoliageRuntimeData[i].Ismc->ClearInstances();
-			FoliageRuntimeData[i].Ismc->DestroyComponent();
-		}
-	}
-	FoliageRuntimeData.Empty();
-	FoliageBiomes.Empty();
-
-	//clear water
-	if (WaterChunk != nullptr)
-	{
-		WaterChunk->DestroyComponent();
-		WaterChunk = nullptr;
-	}
-	
-
-	//clear all arrays
-	Vertices.Empty();
-	Slopes.Empty();
-	VertexHeight.Empty();
-	Biomes.Empty();
-	Normals.Empty();
-	Octahedrons.Empty();
-	UVs.Empty();
-	VertexColors.Empty();
-	ForestVertices.Empty();
-	RandomForest.Empty();
-
-	GPUBiomeData = nullptr;
-	
-	SetStaticMesh(nullptr);
-	
-	ChaosMeshData = nullptr;
-
-	if (MaterialInst)
-	{
-		MaterialInst->ConditionalBeginDestroy();
-		MaterialInst = nullptr;
+		/*
+		ChunkSMC->SetStaticMesh(nullptr);
+		ChunkSMC->SetVisibility(false);
+		ChunkSMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		(*ChunkSMCPool).Add(ChunkSMC);
+		ChunkSMC = nullptr;*/
+		ChunkSMC->SetStaticMesh(nullptr);
+		ChunkSMC->DestroyComponent();
+		//print on screen ChunkSMCPool size
+		//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, FString::Printf(TEXT("ChunkSMCPool Size: %d"), WaterSMCPool->Num()));
 	}
 
 	//clear static mesh
@@ -849,30 +846,108 @@ void UChunkComponent::SelfDestruct()
 			ChunkStaticMesh->GetBodySetup()->ConditionalBeginDestroy();
 		}
 
-		ChunkStaticMesh->ReleaseResources();
-		FlushRenderingCommands();
-		ChunkStaticMesh->NaniteSettings.bEnabled = false;
-		if (ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr.IsValid())
-		{
-			ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr->ReleaseResources();
-			ChunkStaticMesh->GetRenderData()->NaniteResourcesPtr.Reset();
-		}
+		UStaticMesh* LocalStaticMesh = ChunkStaticMesh;
+		LocalStaticMesh->ReleaseResources();
+		FStaticMeshRenderData* LocalRenderData = ChunkStaticMesh->GetRenderData();
 
-		ChunkStaticMesh->MarkAsGarbage();
+		ENQUEUE_RENDER_COMMAND(ReleaseNaniteResources)(
+			[LocalStaticMesh, LocalRenderData](FRHICommandListImmediate& RHICmdList)
+			{
+				if (LocalRenderData)
+				{
+					LocalRenderData->ReleaseResources();
+					LocalStaticMesh->NaniteSettings.bEnabled = false;
+					LocalRenderData->NaniteResourcesPtr->ReleaseResources();
+					LocalRenderData->NaniteResourcesPtr.Reset();
+				}
+				
+			});
+
+		//ChunkStaticMesh->MarkAsGarbage();
 		ChunkStaticMesh->ConditionalBeginDestroy();
+		
+		if (MaterialInst)
+		{
+			MaterialInst->ConditionalBeginDestroy();
+			MaterialInst = nullptr;
+		}
 		ChunkStaticMesh = nullptr;
 	}
+
+	
+	if (WaterChunk != nullptr)
+	{
+		WaterChunk->SetVisibility(false);
+		(*WaterSMCPool).Add(WaterChunk);
+		WaterChunk = nullptr;
+	}
+	if (WaterMaterialInst)
+	{
+		WaterMaterialInst->ConditionalBeginDestroy();
+		WaterMaterialInst = nullptr;
+	}
+	
+	for (int i = 0; i < FoliageRuntimeData.Num(); i++)
+	{
+		if (FoliageRuntimeData[i].Ismc != nullptr)
+		{
+			//FoliageRuntimeData[i].Ismc->SetVisibility(false);
+			//FoliageRuntimeData[i].Ismc->ClearInstances();
+			//(*FoliageISMCPool).Add(FoliageRuntimeData[i].Ismc);
+			//FoliageRuntimeData[i].Ismc = nullptr;
+			FoliageRuntimeData[i].Ismc->ClearInstances();
+			FoliageRuntimeData[i].Ismc->DestroyComponent();
+		}
+	}
+
+	for (UChunkComponent* Chunk : ChunksToRemove)
+	{
+		Chunk->FreeComponents();
+	}
+}
+
+
+void UChunkComponent::BeginSelfDestruct()
+{
+	AbortAsync = true;
+	FreeComponents();
+	ChunkStatus = EChunkStatus::REMOVING;
+	//ChunksToRemoveQueue->Add(this);
+	
+}
+
+void UChunkComponent::SelfDestruct()
+{
+	FreeComponents();
+	ChunksToRemove.Empty();
+
+
+	FoliageBiomes.Empty();
+	WaterChunk = nullptr;
+	
+	
+
+	//clear all arrays
+	Vertices.Empty();
+	Slopes.Empty();
+	VertexHeight.Empty();
+	Biomes.Empty();
+	Normals.Empty();
+	Octahedrons.Empty();
+	UVs.Empty();
+	VertexColors.Empty();
+	ForestVertices.Empty();
+	RandomForest.Empty();
+
+	FoliageRuntimeData.Empty();
+	GPUBiomeData = nullptr;
 
 	//clear biome map
 	if (BiomeMap != nullptr)
     {
         BiomeMap->ConditionalBeginDestroy();
     }
-	//ConditionalBeginDestroy();
-	ChunksToFinish = nullptr;
-	ChunksToRemoveQueue = nullptr;
-	DestroyComponent();
-	//CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+	ConditionalBeginDestroy();
 }
 
 

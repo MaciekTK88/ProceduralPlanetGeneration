@@ -1,5 +1,6 @@
-#pragma once
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
 
+#pragma once
 #include "CoreMinimal.h"
 #include "GenericPlatform/GenericPlatformMisc.h"
 #include "Kismet/BlueprintAsyncActionBase.h"

@@ -12,7 +12,7 @@
 #include "Nanite/NaniteFixupChunk.h"
 #endif
 
-TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool RayTracingProxy)
+TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& AbortAsync, bool RayTracingProxy)
 {
 	VOXEL_FUNCTION_COUNTER();
 	check(Mesh.Positions.Num() == Mesh.Normals.Num());
@@ -25,17 +25,26 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool Ra
 
 	using namespace Voxel::Nanite;
 
-	const FVoxelBox Bounds = FVoxelBox::FromPositions(Mesh.Positions);
-
-	Nanite::FResources Resources;
+	Bounds = FVoxelBox::FromPositions(Mesh.Positions);
+	
 
 	TVoxelArray<TUniquePtr<FCluster>> AllClusters = CreateClusters();
+
+	if (AbortAsync == true)
+	{
+		return nullptr;
+	}
 
 	FEncodingSettings EncodingSettings;
 	EncodingSettings.PositionPrecision = PositionPrecision;
 	checkStatic(FEncodingSettings::NormalBits == NormalBits);
 
 	TVoxelArray<TVoxelArray<TUniquePtr<FCluster>>> Pages = CreatePages(AllClusters, EncodingSettings);
+
+	if (AbortAsync == true)
+	{
+		return nullptr;
+	}
 
 	TVoxelChunkedArray<uint8> RootData;
 
@@ -117,6 +126,11 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool Ra
 				LODResource->VertexBuffers.StaticMeshVertexBuffer.SetVertexUV(i, UVIndex, Mesh.TextureCoordinates[UVIndex][i]);
 			}
 		}
+
+		if (AbortAsync == true)
+		{
+			return nullptr;
+		}
 	
 		// Ensure FStaticMeshRenderData::GetFirstValidLODIdx doesn't return -1
 		LODResource->IndexBuffer.SetIndices(TArray<uint32>(Mesh.Indices), EIndexBufferStride::Force32Bit);
@@ -151,13 +165,15 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool Ra
 	}
 
 	return RenderData;
+	
 }
 
 UStaticMesh* FPlanetNaniteBuilder::CreateStaticMesh()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	return CreateStaticMesh(CreateRenderData(false));
+	//return CreateStaticMesh(CreateRenderData(false));
+	return nullptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -1,3 +1,5 @@
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+
 #pragma once
 
 #include "CoreMinimal.h"

@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
 
 #pragma once
 
@@ -21,13 +21,11 @@ struct FChunkTree
 	FChunkTree* Child3 = nullptr;
 	FChunkTree* Child4 = nullptr;
 
-	bool Chunkremover = true;
-
 	UChunkComponent* ChunkMesh = nullptr;
+	
+	float MaxChunkHeight = 0;
 
-	bool working = false;
-
-	void GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* planet, UChunkComponent* ParentMesh);
+	void GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* planet, FChunkTree* ParentMesh);
 
 	~FChunkTree()
 	{
@@ -52,19 +50,19 @@ struct FChunkTree
 
 	}
 
-	void AddChunksToRemove(TArray<UChunkComponent*>& AllChildChunks, bool remove)
+	void AddChunksToRemove(TArray<FChunkTree*>& AllChildChunks, bool remove)
 	{
+		if (remove && ChunkMesh != nullptr)
+		{
+			AllChildChunks.Add(this);
+			return;
+		}
 		if (Child1 != nullptr)
 		{
 			Child1->AddChunksToRemove(AllChildChunks, true);
 			Child2->AddChunksToRemove(AllChildChunks, true);
 			Child3->AddChunksToRemove(AllChildChunks, true);
 			Child4->AddChunksToRemove(AllChildChunks, true);
-		}
-
-		if (remove && ChunkMesh != nullptr)
-		{
-			AllChildChunks.Add(ChunkMesh);
 		}
 	}
 
@@ -100,29 +98,30 @@ public:
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadWrite)
 	UInstancedStaticMeshComponent* CloseWaterMeshInst;
 
+	UFUNCTION(BlueprintCallable, Category = "Spawning")
+	void ClearComponents();
+
 
 	//TArray<AActor*> ChunkArray;
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 #if WITH_EDITOR
 	// Called after properties are initialized
-	virtual void PostInitProperties() override;
+	virtual void PostRegisterAllComponents() override;
 
 	// Called when the actor is being destroyed
 	virtual void BeginDestroy() override;
 
 	// The function that will be called before PIE starts
 	void OnPreBeginPIE(const bool bIsSimulating);
-
-	// The function that will be called when PIE ends
-	void OnEndPIE(const bool bIsSimulating);
+	
 
 	// Delegate handle to allow us to unbind our function safely
 	FDelegateHandle PreBeginPIEDelegateHandle;
-	FDelegateHandle EndPIEDelegateHandle;
 	
 #endif
 
@@ -134,19 +133,13 @@ public:
 	virtual void Tick(float DeltaTime) override;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere)
-	bool UseEditorTick = false;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere)
-	bool InEditor = true;
+	bool UseEditorTick = true;
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
 	void DestroyChunkTrees();
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
 	AActor* Character;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Spawning")
-	TSubclassOf<UChunkComponent> ChunkComponentToSpawn = UChunkComponent::StaticClass();
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
 	UPlanetData* PlanetData;
@@ -172,29 +165,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	float GlobalFoliageDensityScale = 1.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY()
 	UTexture2D* GPUBiomeData;
 
 	UPROPERTY()
 	TArray<UChunkComponent*> ChunkArray;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	FVector planetCenterWS;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Water")
 	UStaticMesh* FarWaterMesh;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Water")
 	UStaticMesh* CloseWaterMesh;
-
-	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	//TArray<UChunkComponent*> ChunksToUpload;
-
-	UPROPERTY(BlueprintReadWrite)
-	TArray<UChunkComponent*> ChunksToFinish;
-
-	UPROPERTY(BlueprintReadWrite)
-    TArray<UChunkComponent*> ChunksToRemove;
 
 	UPROPERTY(BlueprintReadWrite)
 	bool SaveToGenerate = false;
@@ -208,9 +189,20 @@ public:
 	UPROPERTY()
 	uint8 MaterialLayersNum = 0;
 
+	UPROPERTY(BlueprintReadWrite)
+	TArray<UChunkComponent*> Chunks;
+
+	UPROPERTY(BlueprintReadWrite)
+	TArray<UStaticMeshComponent*> ChunkSMCPool;
+
+	UPROPERTY(BlueprintReadWrite)
+	TArray<UInstancedStaticMeshComponent*> FoliageISMCPool;
+
+	UPROPERTY(BlueprintReadWrite)
+	TArray<UStaticMeshComponent*> WaterSMCPool;
+
 
 	FVector WorldLocation;
-	TArray<UChunkComponent*> AllChildChunks;
 	int Chunkcount = 0;
 	FVector CharacterLocation;
 

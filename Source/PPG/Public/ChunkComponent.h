@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
 
 #pragma once
 
@@ -31,8 +31,8 @@ struct FFoliageRuntimeDataS
 	TArray<FTransform> LocalFoliageTransforms;
 };
 
-UCLASS(Blueprintable, BlueprintType, ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
-class PPG_API UChunkComponent : public UStaticMeshComponent
+UCLASS(Blueprintable, BlueprintType)
+class PPG_API UChunkComponent : public UObject
 {
 	GENERATED_BODY()
 
@@ -56,6 +56,17 @@ public:
 
 	UPROPERTY()
 	UPlanetData* PlanetData;
+	
+	enum class EChunkStatus : uint8 {
+		EMPTY = 0,
+		GENERATING = 1,
+		READY = 2,
+		REMOVING = 3,
+		ABORTED = 4
+	};
+	
+
+	EChunkStatus ChunkStatus = EChunkStatus::EMPTY;
 
 	UPROPERTY()
 	UTexture2D* GPUBiomeData;
@@ -78,15 +89,8 @@ public:
 	UPROPERTY()
 	bool GenerateFoliage = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	FVector planetCenterWS;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
 	float FoliageDensityScale = 1.0f;
-	
-
-	//UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	//UInstancedStaticMeshComponent* WaterMeshP;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	bool ready = false;
@@ -104,38 +108,33 @@ public:
 	void UploadFoliageData();
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
-	void UploadFoliage();
-
-	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
 	void AddWaterChunk();
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
 	void GenerationComplete();
 
-	UFUNCTION(BlueprintImplementableEvent, Category = "Foliage")
-	void EventGenerate();
-
-	UFUNCTION(BlueprintImplementableEvent, Category = "Foliage")
-	void EventFoliage();
+	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
+	void AssignComponents();
 
 	UFUNCTION(BlueprintCallable, Category = "Foliage")
 	void SetFoliageActor(AActor* NewFoliageActor);
 
 	UFUNCTION(BlueprintCallable, Category = "DestroyChunk")
 	void BeginSelfDestruct();
+	
+	UFUNCTION(BlueprintCallable, Category = "DestroyChunk")
+	void FreeComponents();
 
 	UFUNCTION(BlueprintCallable, Category = "DestroyChunk")
 	void SelfDestruct();
 
-	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	//TArray<UChunkComponent*>* ChunksToUpload;
+	
+	
+	TArray<UStaticMeshComponent*>* ChunkSMCPool;
+	
+	TArray<UInstancedStaticMeshComponent*>* FoliageISMCPool;
 
-	TArray<UChunkComponent*>* ChunksToFinish;
-
-	TArray<UChunkComponent*>* ChunksToRemoveQueue;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool ReadyToRemove = false;
+	TArray<UStaticMeshComponent*>* WaterSMCPool;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Foliage")
 	int SpawnAtOnce = 10;
@@ -166,15 +165,6 @@ public:
 
 	UPROPERTY()
 	UTextureRenderTarget2D* BiomeMap;
-
-	UPROPERTY()
-	UChunkComponent* ParentChunk;
-
-	UPROPERTY()
-	bool ChunkRemover = false;
-
-	UPROPERTY()
-	int ReadyToRemoveCounter = 0;
 	
 	UPROPERTY()
 	bool DataGenerated = false;
@@ -191,21 +181,20 @@ public:
 	UPROPERTY()
 	UStaticMesh* CloseWaterMesh;
 
+	UPROPERTY()
+	UStaticMeshComponent* ChunkSMC;
 
-
+	UPROPERTY()
+	UStaticMesh* ChunkStaticMesh;
 	
 	TArray<uint32>* Triangles;
 
 
 protected:
-	// Called when the game starts
-	virtual void BeginPlay() override;
-	// Called when the mesh generation should happen. This could be called in the
-	// editor for placed actors, or at runtime for spawned actors.
-	//virtual void OnGenerateMesh_Implementation() override;
+
 
 private:
-	//URealtimeMeshSimple* ProceduralMesh;
+
 	UPROPERTY()
 	TArray<FVector3f> Vertices;
 	UPROPERTY()
@@ -225,9 +214,6 @@ private:
 	UPROPERTY()
 	TArray<uint8> RandomForest;
 
-	UPROPERTY()
-	UStaticMesh* ChunkStaticMesh;
-
 	UPROPERTY(EditAnywhere)
 	TArray<UFoliageData*> FoliageBiomes;
 
@@ -239,19 +225,17 @@ private:
 
 	UPROPERTY()
 	UStaticMeshComponent* WaterChunk;
-	
+
 	TUniquePtr<FStaticMeshRenderData> RenderData;
-	//Nanite::FResources Resources;
-	//FStaticMeshLODResources* LODResource;
-	//FVoxelBox Bounds;
 	
 	
-	//FPlanetNaniteBuilder NaniteBuilder;
-	
-	Chaos::FTriangleMeshImplicitObjectPtr ChaosMeshData;
+	FPlanetNaniteBuilder NaniteBuilder;
 
 	UPROPERTY()
 	UMaterialInstanceDynamic* MaterialInst;
+
+	UPROPERTY()
+	UMaterialInstanceDynamic* WaterMaterialInst;
 	
 	UPROPERTY()
 	TArray<FFoliageRuntimeDataS> FoliageRuntimeData;
@@ -287,6 +271,16 @@ private:
 		return u;
 	}
 
+	// helper: quantize a float so that values within `Range` map to same quantized bucket
+	static inline float QuantizeFloat(float f, float Range)
+	{
+		if (Range <= 0.0f)
+			return f; // no quantization
+
+		// Round to nearest multiple of Range
+		return FMath::RoundToFloat(f / Range) * Range;
+	}
+
 	// core 3D -> [0,1] hash, optional salt for getting independent hashes
 	static inline float Hash3DToUnit(const FVector& P, uint32_t Salt = 0u)
 	{
@@ -301,16 +295,27 @@ private:
 		return static_cast<float>(h) / 4294967295.0f;
 	}
 
-	// final function requested: returns two independent components in [RangeMin, RangeMax]
-	static inline FVector2D HashFVectorToVector2D(const FVector& Input, float RangeMin, float RangeMax)
+	// final function: returns two independent components in [RangeMin, RangeMax]
+	// RangeTolerance controls when nearby inputs are considered the same
+	static inline FVector2D HashFVectorToVector2D(const FVector& Input, float RangeMin, float RangeMax, float RangeTolerance = 0.0f)
 	{
+		FVector QuantizedInput = Input;
+
+		if (RangeTolerance > 0.0f)
+		{
+			QuantizedInput.X = QuantizeFloat(Input.X, RangeTolerance);
+			QuantizedInput.Y = QuantizeFloat(Input.Y, RangeTolerance);
+			QuantizedInput.Z = QuantizeFloat(Input.Z, RangeTolerance);
+		}
+
 		// produce two independent hashes by using different salts
-		const float hx = Hash3DToUnit(Input, 0x243F6A88u); // arbitrary salt (example: part of PI's fractional)
-		const float hy = Hash3DToUnit(Input, 0x85A308D3u); // different arbitrary salt
+		const float hx = Hash3DToUnit(QuantizedInput, 0x243F6A88u); // arbitrary salt
+		const float hy = Hash3DToUnit(QuantizedInput, 0x85A308D3u); // different arbitrary salt
 
 		const float x = FMath::Lerp(RangeMin, RangeMax, hx);
 		const float y = FMath::Lerp(RangeMin, RangeMax, hy);
 
 		return FVector2D(x, y);
 	}
+
 };

@@ -4,6 +4,7 @@
 
 #include "VoxelMinimal.h"
 #include "StaticMeshResources.h"
+#include "Rendering/NaniteResources.h"
 
 namespace Voxel::Nanite
 {
@@ -36,7 +37,7 @@ public:
 
 	// OutClusteredIndices will be filled only when compressing vertices;
 	// In other case, original indices array does represent clustered indices
-	TUniquePtr<FStaticMeshRenderData> CreateRenderData(bool RayTracingProxy);
+	TUniquePtr<FStaticMeshRenderData> CreateRenderData(bool& AbortAsync, bool RayTracingProxy);
 	UStaticMesh* CreateStaticMesh();
 
 public:
@@ -63,6 +64,9 @@ private:
 	bool Build(FBuildData& BuildData);
 
 	TVoxelArray<TUniquePtr<FCluster>> CreateClusters() const;
+
+	Nanite::FResources Resources;
+	FVoxelBox Bounds;
 
 	TVoxelArray<TVoxelArray<TUniquePtr<FCluster>>> CreatePages(
 		TVoxelArray<TUniquePtr<FCluster>>& Clusters,
