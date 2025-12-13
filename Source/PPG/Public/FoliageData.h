@@ -58,7 +58,10 @@ struct FFoliageListS
 	float MaxHeight = 600000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	bool isSlopeFoliage = false;
+	int MinSlope = 0;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	int MaxSlope = 8;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool AbsoluteHeight = false;

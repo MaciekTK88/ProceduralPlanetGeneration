@@ -154,25 +154,46 @@ public:
 		return LocalLocation + TransformPos;
 	}
 
-	FVector2f InversePlanetTransformLocation(const FIntVector TransformRotDeg, const FVector& WorldLocation)
+	FVector2f InversePlanetTransformLocation(
+		const FVector& TransformPos,
+		const FIntVector TransformRotDeg,
+		const FVector& PlanetSpaceLocation)
 	{
-		//FIntVector IntWorldPos = FVoxelUtilities::RoundToInt(WorldLocation / 10000);
+		FVector Pos = PlanetSpaceLocation - TransformPos;
 		
-		if (TransformRotDeg.X != 0 && TransformRotDeg.Y != 0)
+		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == -1 && TransformRotDeg.Z == 0)
 		{
-			return FVector2f(WorldLocation.X, WorldLocation.Y);
+			return FVector2f(Pos.X, Pos.Z);
 		}
-		if (TransformRotDeg.X != 0 && TransformRotDeg.Z != 0)
+		
+		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == 1 && TransformRotDeg.Z == 0)
 		{
-			return FVector2f(WorldLocation.X, WorldLocation.Z);
+			return FVector2f(Pos.X, -Pos.Z);
 		}
-		if (TransformRotDeg.Y != 0 && TransformRotDeg.Z != 0)
+		
+		if (TransformRotDeg.X == -1 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == 0)
 		{
-			return FVector2f(WorldLocation.Y, WorldLocation.Z);
+			return FVector2f(Pos.Z, Pos.Y);
 		}
+		
+		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == 1)
+		{
+			return FVector2f(Pos.X, Pos.Y);
+		}
+		
+		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == -1)
+		{
+			return FVector2f(-Pos.X, Pos.Y);
+		}
+		
+		if (TransformRotDeg.X == 1 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == 0)
+		{
+			return FVector2f(-Pos.Z, Pos.Y);
+		}
+
 		return FVector2f(0, 0);
-		
-    }
+	}
+
 
 
 private:

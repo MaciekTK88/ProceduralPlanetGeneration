@@ -23,7 +23,7 @@ struct FFoliageRuntimeDataS
 	
 	UPROPERTY(VisibleDefaultsOnly)
 	UInstancedStaticMeshComponent* Ismc = nullptr;
-
+	
 	UPROPERTY(VisibleDefaultsOnly)
 	FFoliageListS Foliage;
 
@@ -210,12 +210,12 @@ private:
 	UPROPERTY()
 	TArray<uint8> Biomes;
 	UPROPERTY()
-	TArray<bool> ForestVertices;
+	TSet<uint8> FoliageBiomeIndices;
 	UPROPERTY()
-	TArray<uint8> RandomForest;
+	TArray<uint8> ForestStrength;
 
-	UPROPERTY(EditAnywhere)
-	TArray<UFoliageData*> FoliageBiomes;
+	//UPROPERTY(EditAnywhere)
+	//TArray<UFoliageData*> FoliageBiomes;
 
 	UPROPERTY()
 	bool bRaytracing = false;
@@ -272,7 +272,7 @@ private:
 	}
 
 	// helper: quantize a float so that values within `Range` map to same quantized bucket
-	static inline float QuantizeFloat(float f, float Range)
+	static float QuantizeFloat(float f, float Range)
 	{
 		if (Range <= 0.0f)
 			return f; // no quantization
@@ -280,9 +280,19 @@ private:
 		// Round to nearest multiple of Range
 		return FMath::RoundToFloat(f / Range) * Range;
 	}
+	
+	//QuantizeDouble
+	static double QuantizeDouble(double d, double Range)
+	{
+		if (Range <= 0.0)
+			return d; // no quantization
+		
+		// Round to nearest multiple of Range
+		return FMath::RoundToDouble(d / Range) * Range;
+	}
 
 	// core 3D -> [0,1] hash, optional salt for getting independent hashes
-	static inline float Hash3DToUnit(const FVector& P, uint32_t Salt = 0u)
+	static float Hash3DToUnit(const FVector& P, uint32_t Salt = 0u)
 	{
 		const uint32_t ux = FloatAsUint(P.X);
 		const uint32_t uy = FloatAsUint(P.Y);
@@ -297,7 +307,7 @@ private:
 
 	// final function: returns two independent components in [RangeMin, RangeMax]
 	// RangeTolerance controls when nearby inputs are considered the same
-	static inline FVector2D HashFVectorToVector2D(const FVector& Input, float RangeMin, float RangeMax, float RangeTolerance = 0.0f)
+	static FVector2D HashFVectorToVector2D(const FVector& Input, float RangeMin, float RangeMax, float RangeTolerance = 0.0f)
 	{
 		FVector QuantizedInput = Input;
 

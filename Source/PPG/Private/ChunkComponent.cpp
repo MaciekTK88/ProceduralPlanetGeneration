@@ -5,9 +5,7 @@
 #include "Math/Vector.h"
 #include "Async/Async.h"
 #include "Kismet/GameplayStatics.h"
-//#include "RealtimeMeshSimple.h"
 #include <MeshCardBuild.h>
-
 #include "Kismet/KismetMathLibrary.h"
 #include "PlanetNaniteBuilder.h"
 #include "VoxelMinimal.h"
@@ -38,6 +36,18 @@ void UChunkComponent::GenerationComplete()
 		}
 		else
 		{
+			// Clear arrays immediately since async task is complete
+			// This prevents memory from accumulating while waiting for SelfDestruct()
+			Vertices.Empty();
+			Normals.Empty();
+			Octahedrons.Empty();
+			UVs.Empty();
+			VertexColors.Empty();
+			VertexHeight.Empty();
+			Slopes.Empty();
+			ForestStrength.Empty();
+			Biomes.Empty();
+			FoliageBiomeIndices.Empty();
 			ChunkStatus = EChunkStatus::ABORTED;
 		}
 
@@ -54,6 +64,18 @@ void UChunkComponent::GenerationComplete()
 			}
 			else
 			{
+				// Clear arrays immediately since async task is complete
+				// This prevents memory from accumulating while waiting for SelfDestruct()
+				Vertices.Empty();
+				Normals.Empty();
+				Octahedrons.Empty();
+				UVs.Empty();
+				VertexColors.Empty();
+				VertexHeight.Empty();
+				Slopes.Empty();
+				ForestStrength.Empty();
+				Biomes.Empty();
+				FoliageBiomeIndices.Empty();
 				ChunkStatus = EChunkStatus::ABORTED;
 			}
 		});
@@ -202,8 +224,7 @@ void UChunkComponent::GenerateChunk()
 	VertexColors.Reserve(VerticesAmount * VerticesAmount);
 	VertexHeight.Reserve(VerticesAmount * VerticesAmount);
 	Slopes.Reserve(VerticesAmount * VerticesAmount);
-	Biomes.Reserve(VerticesAmount * VerticesAmount);
-	ForestVertices.Reserve(VerticesAmount * VerticesAmount);
+	ForestStrength.Reserve(VerticesAmount * VerticesAmount);
 	
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](TArray<float> OutputVal, TArray<uint8> OutputVCVal) {
 
@@ -243,8 +264,7 @@ void UChunkComponent::GenerateChunk()
 					
 					uint8 BiomeIndex = OutputVCVal[(x + y * VerticesAmount) * 3 + 2];
 					uint8 ShaderForestNoise = OutputVCVal[(x + y * VerticesAmount) * 3 + 1];
-
-					bool ForestVertex = false;
+					
 
 					if (PlanetData->BiomeData[BiomeIndex].GenerateForest == true && PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
 					{
@@ -252,26 +272,29 @@ void UChunkComponent::GenerateChunk()
 						//float VertexRandom = (FMath::PerlinNoise3D((FVector(Vertex) + ChunkLocation) * 0.001f) + 1) / 2.0f * 255.0f;
 						if ((ShaderForestNoise <= VertexRandom || noiseheight > PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MaxHeight || noiseheight < PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MinHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
 						{
-							FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
+							//FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
 							ShaderForestNoise = 0;
 						}
 						else if (PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
 						{
-							FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].ForestFoliageData);
-							ForestVertex = true;
+							//FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].ForestFoliageData);
 						}
 					}
 					else
 					{
-						FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
+						//FoliageBiomes.AddUnique(PlanetData->BiomeData[BiomeIndex].FoliageData);
 						ShaderForestNoise = 0;
 					}
 					VertexColors.Add(FColor(OutputVCVal[(x + y * VerticesAmount) * 3], ShaderForestNoise, BiomeIndex, 0));
 					
 					VertexHeight.Add(noiseheight);
 					Slopes.Add(0);
+					if (PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr || PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
+					{
+						FoliageBiomeIndices.Add(BiomeIndex);
+					}
+					ForestStrength.Add(OutputVCVal[(x + y * VerticesAmount) * 3 + 1]);
 					Biomes.Add(BiomeIndex);
-					ForestVertices.Add(ForestVertex);
 					
 				}
 			}
@@ -370,90 +393,128 @@ void UChunkComponent::CompleteChunkGeneration()
 
 		if (GenerateFoliage)
 		{
-			float minchunkSize = (PlanetData->PlanetRadius * 2.0f) / FMath::Sqrt(2.0f) / FMath::Pow(2.0f, PlanetData->maxRecursionLevel);
-			//DataGuard.Lock();
-			for (int x = 0; x < FoliageBiomes.Num(); x++)
+			for (uint8 BiomeIdx : FoliageBiomeIndices)
 			{
-
-				for (int i = 0; i < FoliageBiomes[x]->FoliageList.Num(); i++)
+				const FBiomeDataS& FoliageBiome = PlanetData->BiomeData[BiomeIdx];
+				for (UFoliageData* FoliageData : { FoliageBiome.FoliageData, FoliageBiome.ForestFoliageData })
 				{
-					if (AbortAsync == true)
+					if (!FoliageData) continue;
+					
+					for (const FFoliageListS& Foliage : FoliageData->FoliageList)
 					{
-						GenerationComplete();
-						return;
-					}
+						if (AbortAsync == true)
+						{
+							GenerationComplete();
+							return;
+						}
 				
-					if (FoliageBiomes[x]->FoliageList[i].FoliageDistance >= PlanetData->maxRecursionLevel - recursionLevel)
-					{
-						FFoliageRuntimeDataS Biome;
-						Biome.Foliage = FoliageBiomes[x]->FoliageList[i];
-						int index = FoliageRuntimeData.Add(Biome);
-						
-
-						int Density = Biome.Foliage.FoliageDensity;
-						
-						
-						if (Biome.Foliage.ScalableDensity == true)
+						if (Foliage.FoliageDistance >= PlanetData->maxRecursionLevel - recursionLevel)
 						{
-							Density = Density * FoliageDensityScale;
-						}
-
-						if (Biome.Foliage.LowPolyActivation <= PlanetData->maxRecursionLevel - recursionLevel && Biome.Foliage.LowPolyMesh != nullptr)
-						{
-							Density = Density * Biome.Foliage.FarFoliageDensityScale;
-						}
-
-						//LocalFoliageTransform.Empty();
-						int localdensity = Density * FMath::Pow(2, float(PlanetData->maxRecursionLevel - recursionLevel));
+							FFoliageRuntimeDataS RuntimeData;
+							
+							float Density = Foliage.FoliageDensity;
 						
-						for (int y = 0; y < localdensity; y++)
-						{
-							for (int z = 0; z < localdensity; z++)
+						
+							if (Foliage.ScalableDensity == true)
 							{
-							
-								//FVector2f ChunkUVpos = PlanetData->InversePlanetTransformLocation(PlanetSpaceRotation, PlanetSpaceLocation);
-								float xlocalpos = y * minchunkSize / (float)(Density);
-								float ylocalpos = z * minchunkSize / (float)(Density);
-								
-							
-								FVector PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
-								FVector NormalizedfoliageLocation = PlanetSpaceFoliageLocation.GetSafeNormal() * PlanetData->PlanetRadius;
+								Density = Density * FoliageDensityScale;
+							}
 
-								//uint32 SeedValue = FCrc::MemCrc32(&NormalizedfoliageLocation, sizeof(FVector));
-								FRandomStream ScaleStream((int)(NormalizedfoliageLocation.X / 10000) + (int)(NormalizedfoliageLocation.Y / 10000) + (int)(NormalizedfoliageLocation.Z / 10000));
+							if (Foliage.LowPolyActivation <= PlanetData->maxRecursionLevel - recursionLevel && Foliage.LowPolyMesh != nullptr)
+							{
+								Density = Density * Foliage.FarFoliageDensityScale;
+							}
 
-								FVector2d NewLocalPos = HashFVectorToVector2D(NormalizedfoliageLocation + x * 100 + i * 100, 0.0f, minchunkSize, 10.0f);
-								NewLocalPos += FVector2d((int)((xlocalpos / minchunkSize)) * minchunkSize, (int)((ylocalpos / minchunkSize)) * minchunkSize);
-								
-								
-								xlocalpos = NewLocalPos.X;
-								ylocalpos = NewLocalPos.Y;
-
-								int vertexX = FMath::RoundToInt(xlocalpos / ChunkSize * float(ChunkQuality));
-								int vertexY = FMath::RoundToInt(ylocalpos / ChunkSize * float(ChunkQuality));
-								int vertexIndex = vertexX + vertexY * VerticesAmount;
-								vertexIndex = FMath::Clamp(vertexIndex, 0, Vertices.Num() - 1);
-
-								bool ShouldSpawn = true;
-								
-								if (ForestVertices[vertexIndex] == true && PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageBiomes[x])
+							//LocalFoliageTransform.Empty();
+							//Density = 1;
+							float FoliageSpacing = (10000 / Density);
+							int LocalDensity = FMath::Max(ChunkSize / FoliageSpacing + 2.01, 1);
+						
+							for (int y = 0; y < LocalDensity; y++)
+							{
+								for (int z = 0; z < LocalDensity; z++)
 								{
-									ShouldSpawn = false;
-								}
-
-								if (ForestVertices[vertexIndex] == false && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageBiomes[x])
-								{
-									ShouldSpawn = false;
-								}
-
-								if (PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData != FoliageBiomes[x] && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData != FoliageBiomes[x])
-								{
-									ShouldSpawn = false;
-								}
-
-								if (ShouldSpawn == true)
-								{
+								
+									float xlocalpos = y * FoliageSpacing;
+									float ylocalpos = z * FoliageSpacing;
+								
+									FVector PlanetSpaceFoliageLocation;
+									PlanetSpaceFoliageLocation.X = QuantizeDouble(PlanetSpaceLocation.X, FoliageSpacing);
+									PlanetSpaceFoliageLocation.Y = QuantizeDouble(PlanetSpaceLocation.Y, FoliageSpacing);
+									PlanetSpaceFoliageLocation.Z = QuantizeDouble(PlanetSpaceLocation.Z, FoliageSpacing);
+								
+									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceFoliageLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
+								
+								
+								
+									FVector2f localpos = PlanetData->InversePlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, PlanetSpaceFoliageLocation);
+									if (localpos.X > ChunkSize || localpos.Y > ChunkSize || localpos.X <= 0 || localpos.Y <= 0)
+									{
+										continue;
+									}
+								
+									xlocalpos = localpos.X;
+									ylocalpos = localpos.Y;
+								
 									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
+
+									//uint32 SeedValue = FCrc::MemCrc32(&NormalizedfoliageLocation, sizeof(FVector));
+									FRandomStream ScaleStream(GetTypeHash(PlanetSpaceFoliageLocation));
+
+									FVector2d NewLocalPos = HashFVectorToVector2D(PlanetSpaceFoliageLocation, -FoliageSpacing / 2, FoliageSpacing / 2, 10.0f);
+									xlocalpos = (NewLocalPos.X + xlocalpos);
+									ylocalpos = (NewLocalPos.Y + ylocalpos);
+									
+									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
+
+									int vertexX = FMath::RoundToInt(FMath::Clamp(xlocalpos / ChunkSize,0,1) * float(ChunkQuality));
+									int vertexY = FMath::RoundToInt(FMath::Clamp(ylocalpos / ChunkSize,0,1) * float(ChunkQuality));
+									int vertexIndex = vertexX + vertexY * VerticesAmount;
+									vertexIndex = FMath::Clamp(vertexIndex, 0, Vertices.Num() - 1);
+								
+									float VertexRandom = abs(NewLocalPos.X / FoliageSpacing * 255.0f);
+									
+									//Forest strength average from surrounding vertices
+									float Forest = ForestStrength[vertexIndex];
+									int32 Count = 1;
+
+									if (vertexX + 1 < VerticesAmount)
+									{
+										Forest += ForestStrength[vertexIndex + 1];
+										Count++;
+									}
+									if (vertexY + 1 < VerticesAmount)
+									{
+										Forest += ForestStrength[vertexIndex + VerticesAmount];
+										Count++;
+									}
+									if (vertexX + 1 < VerticesAmount && vertexY + 1 < VerticesAmount)
+									{
+										Forest += ForestStrength[vertexIndex + 1 + VerticesAmount];
+										Count++;
+									}
+
+									Forest /= Count;
+								
+									if (Forest >= VertexRandom && FoliageData == FoliageBiome.FoliageData)
+									{
+										continue;
+									}
+
+									if (Forest < VertexRandom && FoliageData == FoliageBiome.ForestFoliageData)
+									{
+										continue;
+									}
+
+									if (PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageData && FoliageData == FoliageBiome.ForestFoliageData)
+									{
+										continue;
+									}
+									
+									if (PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageData && FoliageData == FoliageBiome.FoliageData)
+									{
+										continue;
+									}
 
 									//transform planetSpaceVertex to -1, 1 range
 									float OriginalChunkSize = PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
@@ -464,73 +525,71 @@ void UChunkComponent::CompleteChunkGeneration()
 									PlanetSpaceFoliageLocation.X = tan(PlanetSpaceFoliageLocation.X * PI * deformation / 4.0);
 									PlanetSpaceFoliageLocation.Y = tan(PlanetSpaceFoliageLocation.Y * PI * deformation / 4.0);
 									PlanetSpaceFoliageLocation.Z = tan(PlanetSpaceFoliageLocation.Z * PI * deformation / 4.0);
-									
-									PlanetSpaceFoliageLocation.Normalize();
 								
+									PlanetSpaceFoliageLocation.Normalize();
+							
 									double Height = VertexHeight[vertexIndex];
 
-									if (Biome.Foliage.AbsoluteHeight == true)
+									if (Foliage.AbsoluteHeight == true)
 									{
 										Height = 0;
 									}
-						
-			
+					
+		
 
-									PlanetSpaceFoliageLocation *= (PlanetData->PlanetRadius + Height - Biome.Foliage.DepthOffset);
+									PlanetSpaceFoliageLocation *= (PlanetData->PlanetRadius + Height - Foliage.DepthOffset);
 									PlanetSpaceFoliageLocation = PlanetSpaceFoliageLocation - (ChunkLocation - PlanetSpaceLocation);
-							
 						
+					
 
-									if (Height > Biome.Foliage.MaxHeight || Height < Biome.Foliage.MinHeight)
+									if (Height > Foliage.MaxHeight || Height < Foliage.MinHeight)
 									{
-										ShouldSpawn = false;
-										//VertexColors[vertexIndex].G = 255;
+										continue;
 									}
 
-									if (Slopes[vertexIndex] > 8 && Biome.Foliage.isSlopeFoliage == false)
+									if (Slopes[vertexIndex] > Foliage.MaxSlope || Slopes[vertexIndex] < Foliage.MinSlope)
 									{
-										ShouldSpawn = false;
-										//VertexColors[vertexIndex].G = 255;
+										continue;
 									}
+					
+					
 						
-						
-							
-									if (ShouldSpawn == true)
-									{
-										FRotator Rot = FRotator(0, 0, 0);
-						
-										if (Biome.Foliage.AlignToTarrain == false)
-										{						
-											Rot = UKismetMathLibrary::FindLookAtRotation(FVector(0,0, 0), PlanetSpaceFoliageLocation);
-											Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
-										}
-										else if (Vertices.IsValidIndex(vertexIndex) && Normals.IsValidIndex(vertexIndex))
-										{
-											FVector v1 = FVector(Vertices[vertexIndex]);
 
-											FVector v2 = FVector(Vertices[vertexIndex]) + FVector(Normals[vertexIndex]);
-
-											Rot = UKismetMathLibrary::FindLookAtRotation(v1, v2);
-											Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
-										}
-
-										FTransform transform = FTransform(Rot, PlanetSpaceFoliageLocation - PlanetSpaceLocation, FVector(1, 1, 1));
-										Rot = FRotator(0, ScaleStream.FRandRange(0, 360), 0);
-										Rot = UKismetMathLibrary::TransformRotation(transform, Rot);
-									
-										transform = FTransform(Rot,PlanetSpaceFoliageLocation - PlanetSpaceLocation,FVector(
-												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale),
-												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale),
-												ScaleStream.FRandRange(Biome.Foliage.minScale, Biome.Foliage.maxScale))
-												);
-																					
-										FoliageRuntimeData[index].LocalFoliageTransforms.Add(transform);
-									}
-								}
-								
-							}
-						}
+									FRotator Rot = FRotator(0, 0, 0);
 				
+									if (Foliage.AlignToTarrain == false)
+									{						
+										Rot = UKismetMathLibrary::FindLookAtRotation(FVector(0,0, 0), PlanetSpaceFoliageLocation);
+										Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
+									}
+									else if (Vertices.IsValidIndex(vertexIndex) && Normals.IsValidIndex(vertexIndex))
+									{
+										FVector v1 = FVector(Vertices[vertexIndex]);
+
+										FVector v2 = FVector(Vertices[vertexIndex]) + FVector(Normals[vertexIndex]);
+
+										Rot = UKismetMathLibrary::FindLookAtRotation(v1, v2);
+										Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
+									}
+
+									FTransform transform = FTransform(Rot, PlanetSpaceFoliageLocation - PlanetSpaceLocation, FVector(1, 1, 1));
+									Rot = FRotator(0, ScaleStream.FRandRange(0, 360), 0);
+									Rot = UKismetMathLibrary::TransformRotation(transform, Rot);
+							
+									transform = FTransform(Rot,PlanetSpaceFoliageLocation - PlanetSpaceLocation,FVector(
+											ScaleStream.FRandRange(Foliage.minScale, Foliage.maxScale),
+											ScaleStream.FRandRange(Foliage.minScale, Foliage.maxScale),
+											ScaleStream.FRandRange(Foliage.minScale, Foliage.maxScale))
+											);
+																			
+									RuntimeData.LocalFoliageTransforms.Add(transform);
+								
+								}
+							}
+							RuntimeData.Foliage = Foliage;
+							FoliageRuntimeData.Add(RuntimeData);
+				
+						}
 					}
 				}
 			}
@@ -846,12 +905,16 @@ void UChunkComponent::FreeComponents()
 			ChunkStaticMesh->GetBodySetup()->ConditionalBeginDestroy();
 		}
 
+		// Disable ray tracing support BEFORE releasing to ensure RT resources are cleaned
+		ChunkStaticMesh->bSupportRayTracing = false;
+
 		UStaticMesh* LocalStaticMesh = ChunkStaticMesh;
 		LocalStaticMesh->ReleaseResources();
 		FStaticMeshRenderData* LocalRenderData = ChunkStaticMesh->GetRenderData();
+		UMaterialInstanceDynamic* LocalMaterialInst = MaterialInst;
 
 		ENQUEUE_RENDER_COMMAND(ReleaseNaniteResources)(
-			[LocalStaticMesh, LocalRenderData](FRHICommandListImmediate& RHICmdList)
+			[LocalStaticMesh, LocalRenderData, LocalMaterialInst](FRHICommandListImmediate& RHICmdList)
 			{
 				if (LocalRenderData)
 				{
@@ -861,17 +924,29 @@ void UChunkComponent::FreeComponents()
 					LocalRenderData->NaniteResourcesPtr.Reset();
 				}
 				
+				// Defer destruction to game thread AFTER render resources are released
+				AsyncTask(ENamedThreads::GameThread, [LocalStaticMesh, LocalMaterialInst]()
+				{
+					LocalStaticMesh->ConditionalBeginDestroy();
+					if (LocalMaterialInst)
+					{
+						LocalMaterialInst->ConditionalBeginDestroy();
+					}
+				});
 			});
 
-		//ChunkStaticMesh->MarkAsGarbage();
-		ChunkStaticMesh->ConditionalBeginDestroy();
-		
-		if (MaterialInst)
-		{
-			MaterialInst->ConditionalBeginDestroy();
-			MaterialInst = nullptr;
-		}
+		MaterialInst = nullptr;
 		ChunkStaticMesh = nullptr;
+	}
+
+	// Reset ray tracing flag for potential chunk reuse
+	bRaytracing = false;
+
+	// Clean up BiomeMap render target
+	if (BiomeMap != nullptr)
+	{
+		BiomeMap->ConditionalBeginDestroy();
+		BiomeMap = nullptr;
 	}
 
 	
@@ -920,25 +995,21 @@ void UChunkComponent::SelfDestruct()
 {
 	FreeComponents();
 	ChunksToRemove.Empty();
-
-
-	FoliageBiomes.Empty();
-	WaterChunk = nullptr;
 	
+	WaterChunk = nullptr;
 	
 
 	//clear all arrays
 	Vertices.Empty();
 	Slopes.Empty();
 	VertexHeight.Empty();
-	Biomes.Empty();
+	FoliageBiomeIndices.Empty();
 	Normals.Empty();
 	Octahedrons.Empty();
 	UVs.Empty();
 	VertexColors.Empty();
-	ForestVertices.Empty();
-	RandomForest.Empty();
-
+	ForestStrength.Empty();
+	Biomes.Empty();
 	FoliageRuntimeData.Empty();
 	GPUBiomeData = nullptr;
 
