@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Maciej Tkaczewski. MIT License.
 
 #include "FoliageSpawner.h"
-#include "Components/HierarchicalInstancedStaticMeshComponent.h"
+
 
 // Sets default values
 AFoliageSpawner::AFoliageSpawner()

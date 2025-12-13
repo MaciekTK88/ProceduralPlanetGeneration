@@ -3,12 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "RHI.h"
-#include "RHIResources.h"
-#include "GlobalShader.h"
-#include "ShaderParameterUtils.h"
-#include "RHICommandList.h"
-#include "RenderGraphUtils.h"
+
 #include "Engine/DataAsset.h"
 #include "FoliageData.h"
 #include "PlanetData.generated.h"
@@ -43,28 +38,10 @@ struct FBiomeDataS
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
 	UFoliageData* ForestFoliageData;
 
-	//UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
-	//float ForestHeight = 100000;
+
 };
 
-/*
-class FMyNoiseComputeShader : public FGlobalShader
-{
-	DECLARE_GLOBAL_SHADER(FMyNoiseComputeShader);
-	SHADER_USE_PARAMETER_STRUCT(FMyNoiseComputeShader, FGlobalShader);
 
-public:
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER(float, noiseScale)
-		SHADER_PARAMETER(uint32, PositionsCount)
-		SHADER_PARAMETER(FIntPoint, TextureResolution)  // Use FIntPoint instead of FVector2D.
-		SHADER_PARAMETER_SRV(StructuredBuffer<float3>, Positions)
-		SHADER_PARAMETER_UAV(RWTexture2D<float>, OutTexture)
-	END_SHADER_PARAMETER_STRUCT()
-};
-
-IMPLEMENT_GLOBAL_SHADER(FMyNoiseComputeShader, "/Project/Private/MyNoiseComputeShader.usf", "CSMain", SF_Compute);
-*/
 
 
 UCLASS(BlueprintType)
@@ -85,16 +62,16 @@ public:
 	UTexture2D* CurveAtlas;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	float noiseHeight = 400000.0f;
+	float NoiseHeight = 400000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	float PlanetRadius = 2500000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	int maxRecursionLevel = 10;
+	int MaxRecursionLevel = 10;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	int minRecursionLevel = 0;
+	int MinRecursionLevel = 0;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	UMaterialInterface* PlanetMaterial;
@@ -117,8 +94,6 @@ public:
 	{
 		// Round the rotation values to the nearest integer
 		FIntVector Rotation = TransformRotDeg;
-		//print rotation
-		//GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Red, FString::Printf(TEXT("Rotation: %d %d %d"), Rotation.X, Rotation.Y, Rotation.Z));
 
 		if (Rotation.X == 0 && Rotation.Y == -1 && Rotation.Z == 0)
 		{
@@ -199,6 +174,7 @@ public:
 private:
 	
 		
+	/*
 	float hash(float n)
 	{
 		return FMath::Frac(FMath::Sin(n) * 753.5453123);
@@ -226,12 +202,5 @@ private:
 			mix(mix(hash(n + 113.0), hash(n + 114.0), f.X),
 				mix(hash(n + 270.0), hash(n + 271.0), f.X), f.Y), f.Z);
 	}
-
-	//#define DECL_FBM_FUNC(_name, _octaves, _basis) 
-	// float _name(_in(vec3) pos, _in(float) lacunarity, _in(float) init_gain, _in(float) gain) { 
-	// vec3 p = pos; float H = init_gain; float t = 0.; 
-	// for (int i = 0; i < _octaves; i++) { t += _basis * H; p *= lacunarity; H *= gain; }
-	// return t; }
-	
-	
+	*/
 };

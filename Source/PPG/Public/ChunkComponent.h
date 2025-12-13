@@ -37,13 +37,12 @@ class PPG_API UChunkComponent : public UObject
 	GENERATED_BODY()
 
 	UPROPERTY()
-	int VerticesAmount = 192.0f;
+	int VerticesAmount = 192;
 
 	UPROPERTY()
 	float Size = 100.0f;
 
-	UPROPERTY()
-	bool collision = true;
+
 
 
 public:
@@ -60,9 +59,10 @@ public:
 	enum class EChunkStatus : uint8 {
 		EMPTY = 0,
 		GENERATING = 1,
-		READY = 2,
-		REMOVING = 3,
-		ABORTED = 4
+		PENDING_ASSIGN = 2,  // Async work done, waiting for AssignComponents
+		READY = 3,
+		REMOVING = 4,
+		ABORTED = 5
 	};
 	
 
@@ -194,6 +194,8 @@ protected:
 
 
 private:
+
+	void SpawnFoliageComponent(FFoliageRuntimeDataS& Data);
 
 	UPROPERTY()
 	TArray<FVector3f> Vertices;

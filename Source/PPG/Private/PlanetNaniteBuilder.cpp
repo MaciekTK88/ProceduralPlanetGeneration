@@ -4,6 +4,7 @@
 #include <MeshCardRepresentation.h>
 #include "StaticMeshResources.h"
 #include "MeshCardBuild.h"
+
 #include "VoxelNanite.h"
 #include "Engine/StaticMesh.h"
 #include "Rendering/NaniteResources.h"
@@ -172,7 +173,7 @@ UStaticMesh* FPlanetNaniteBuilder::CreateStaticMesh()
 {
 	VOXEL_FUNCTION_COUNTER();
 
-	//return CreateStaticMesh(CreateRenderData(false));
+
 	return nullptr;
 }
 

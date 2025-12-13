@@ -5,7 +5,7 @@
 #include "Math/Vector.h"
 #include "Async/Async.h"
 #include "Kismet/GameplayStatics.h"
-#include <MeshCardBuild.h>
+
 #include "Kismet/KismetMathLibrary.h"
 #include "PlanetNaniteBuilder.h"
 #include "VoxelMinimal.h"
@@ -28,16 +28,14 @@ void UChunkComponent::GenerationComplete()
 {
 	if (IsInGameThread())
 	{
-		//ChunksToFinish->Add(this);
 		if (AbortAsync == false)
 		{
-			AssignComponents();
-			ChunkStatus = EChunkStatus::READY;
+			// Rate-limit component assignment
+			ChunkStatus = EChunkStatus::PENDING_ASSIGN;
 		}
 		else
 		{
-			// Clear arrays immediately since async task is complete
-			// This prevents memory from accumulating while waiting for SelfDestruct()
+			// Cleanup aborted data
 			Vertices.Empty();
 			Normals.Empty();
 			Octahedrons.Empty();
@@ -56,16 +54,14 @@ void UChunkComponent::GenerationComplete()
 	{
 		AsyncTask(ENamedThreads::GameThread, [this]()
 		{
-			//ChunksToFinish->Add(this);
 			if (AbortAsync == false)
 			{
-				AssignComponents();
-				ChunkStatus = EChunkStatus::READY;
+				// Rate-limit component assignment
+				ChunkStatus = EChunkStatus::PENDING_ASSIGN;
 			}
 			else
 			{
-				// Clear arrays immediately since async task is complete
-				// This prevents memory from accumulating while waiting for SelfDestruct()
+				// Cleanup aborted data
 				Vertices.Empty();
 				Normals.Empty();
 				Octahedrons.Empty();
@@ -95,64 +91,57 @@ void UChunkComponent::UploadFoliageData()
 	{
 		if (GenerateFoliage == true && FoliageRuntimeData[i].LocalFoliageTransforms.Num() > 0)
 		{
-			UInstancedStaticMeshComponent* Ismc;
-			/*if ((*FoliageISMCPool).IsEmpty() == false)
-			{
-				Ismc = (*FoliageISMCPool).Pop();
-				Ismc->SetVisibility(true);
-			}
-			else
-			{*/
-				Ismc = NewObject<UInstancedStaticMeshComponent>(FoliageActor, NAME_None, RF_Transient);
-				Ismc->SetupAttachment(FoliageActor->GetRootComponent());
-				Ismc->SetMobility(EComponentMobility::Movable);
-				Ismc->SetGenerateOverlapEvents(false);
-				Ismc->WorldPositionOffsetDisableDistance = FoliageRuntimeData[i].Foliage.WPODisableDistance;
-				Ismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.WPO);
-				Ismc->bAffectDistanceFieldLighting = false;
-				Ismc->InstanceEndCullDistance = FoliageRuntimeData[i].Foliage.CullingDistance;
-				Ismc->bWorldPositionOffsetWritesVelocity = FoliageRuntimeData[i].Foliage.WPO;
-				Ismc->bDisableCollision = true;
-				Ismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
-				Ismc->SetCanEverAffectNavigation(false);
-			//}
-
-
-
-			if (FoliageRuntimeData[i].Foliage.ShadowDisableDistance <= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.ShadowDisableDistance != 0)
-			{
-				Ismc->CastShadow = false;
-				Ismc->bCastContactShadow = false;
-				Ismc->SetVisibleInRayTracing(false);
-			}
-			
-			if (FoliageRuntimeData[i].Foliage.CollisionEnableDistance >= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.CollisionEnableDistance != 0 && FoliageRuntimeData[i].Foliage.Collision == true)
-			{
-				Ismc->bDisableCollision = false;
-			}
-
-			if (FoliageRuntimeData[i].Foliage.LowPolyActivation <= PlanetData->maxRecursionLevel - recursionLevel && FoliageRuntimeData[i].Foliage.LowPolyMesh != nullptr)
-			{
-				Ismc->SetStaticMesh(FoliageRuntimeData[i].Foliage.LowPolyMesh);
-				Ismc->SetEvaluateWorldPositionOffset(FoliageRuntimeData[i].Foliage.FarFoliageWPO);
-				Ismc->bAffectDistanceFieldLighting = false;
-				Ismc->SetVisibleInRayTracing(false);
-				Ismc->bDisableCollision = true;
-
-			}
-			else
-			{
-				Ismc->SetStaticMesh(FoliageRuntimeData[i].Foliage.FoliageMesh);
-			}
-
-			//hismc->bIsAsyncBuilding = true;
-			Ismc->SetRelativeTransform(FTransform(ChunkSMC->GetRelativeRotation(), ChunkLocation, FVector(1.0f, 1.0f, 1.0f)));
-			Ismc->AddInstances(FoliageRuntimeData[i].LocalFoliageTransforms, false, false, false);
-			Ismc->RegisterComponent();
-			FoliageRuntimeData[i].Ismc = Ismc;
-	
+			SpawnFoliageComponent(FoliageRuntimeData[i]);
 		}
 	}
+}
+
+void UChunkComponent::SpawnFoliageComponent(FFoliageRuntimeDataS& Data)
+{
+	UInstancedStaticMeshComponent* Ismc = NewObject<UInstancedStaticMeshComponent>(FoliageActor, NAME_None, RF_Transient);
+	Ismc->SetupAttachment(FoliageActor->GetRootComponent());
+	Ismc->SetMobility(EComponentMobility::Movable);
+	Ismc->SetGenerateOverlapEvents(false);
+	Ismc->WorldPositionOffsetDisableDistance = Data.Foliage.WPODisableDistance;
+	Ismc->SetEvaluateWorldPositionOffset(Data.Foliage.WPO);
+	Ismc->bAffectDistanceFieldLighting = false;
+	Ismc->InstanceEndCullDistance = Data.Foliage.CullingDistance;
+	Ismc->bWorldPositionOffsetWritesVelocity = Data.Foliage.WPO;
+	Ismc->bDisableCollision = true;
+	Ismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
+	Ismc->SetCanEverAffectNavigation(false);
+
+	if (Data.Foliage.ShadowDisableDistance <= PlanetData->MaxRecursionLevel - recursionLevel && Data.Foliage.ShadowDisableDistance != 0)
+	{
+		Ismc->CastShadow = false;
+		Ismc->bCastContactShadow = false;
+		Ismc->SetVisibleInRayTracing(false);
+	}
+
+	if (Data.Foliage.CollisionEnableDistance >= PlanetData->MaxRecursionLevel - recursionLevel && Data.Foliage.CollisionEnableDistance != 0 && Data.Foliage.Collision == true)
+	{
+		Ismc->bDisableCollision = false;
+	}
+
+	if (Data.Foliage.LowPolyActivation <= PlanetData->MaxRecursionLevel - recursionLevel && Data.Foliage.LowPolyMesh != nullptr)
+	{
+		Ismc->SetStaticMesh(Data.Foliage.LowPolyMesh);
+		Ismc->SetEvaluateWorldPositionOffset(Data.Foliage.FarFoliageWPO);
+		Ismc->bAffectDistanceFieldLighting = false;
+		Ismc->SetVisibleInRayTracing(false);
+		Ismc->bDisableCollision = true;
+
+	}
+	else
+	{
+		Ismc->SetStaticMesh(Data.Foliage.FoliageMesh);
+	}
+
+	//hismc->bIsAsyncBuilding = true;
+	Ismc->SetRelativeTransform(FTransform(ChunkSMC->GetRelativeRotation(), ChunkLocation, FVector(1.0f, 1.0f, 1.0f)));
+	Ismc->AddInstances(Data.LocalFoliageTransforms, false, false, false);
+	Ismc->RegisterComponent();
+	Data.Ismc = Ismc;
 }
 
 
@@ -160,7 +149,7 @@ void UChunkComponent::GenerateChunk()
 {
 	ChunkStatus = EChunkStatus::GENERATING;
 	
-	//clear all arrays
+	// Reset
 	Vertices.Empty();
 	Normals.Empty();
 	Octahedrons.Empty();
@@ -168,25 +157,25 @@ void UChunkComponent::GenerateChunk()
 	VertexColors.Empty();
 	VertexHeight.Empty();
 
-	//Calculate veritces amount and size based on chunk size and quality
+	// Init Stats
 	VerticesAmount = ChunkQuality + 1;
 	Size = ChunkSize / ChunkQuality;
 
-	//RenderData = MakeUnique<FStaticMeshRenderData>();
+
 
 	
 
-	if (GenerateRayTracingProxy && recursionLevel >= PlanetData->maxRecursionLevel - 1)
+	if (GenerateRayTracingProxy && recursionLevel >= PlanetData->MaxRecursionLevel - 1)
 	{
 		bRaytracing = true;
 	}
-	if (GenerateCollisions && recursionLevel >= PlanetData->maxRecursionLevel - CollisionDisableDistance)
+	if (GenerateCollisions && recursionLevel >= PlanetData->MaxRecursionLevel - CollisionDisableDistance)
 	{
 		Collisions = true;
 	}
 
 	
-	//create PF_G16 UTextureRenderTarget2D
+	// Init BiomeMap
 	BiomeMap = NewObject<UTextureRenderTarget2D>(this, NAME_None, RF_Transient);
 	BiomeMap->bCanCreateUAV = true;
 	BiomeMap->bSupportsUAV = true;
@@ -201,14 +190,14 @@ void UChunkComponent::GenerateChunk()
 	BiomeMap->UpdateResourceImmediate(); // Must be called after setting UAV flags
 
 	
-	// Create a dispatch parameters struct and fill it the input array with our args
+	// Compute Params
 	FPlanetComputeShaderDispatchParams Params(VerticesAmount, VerticesAmount, 1);
 	Params.ChunkLocation = FVector3f(PlanetSpaceLocation);
 	Params.ChunkRotation = PlanetSpaceRotation;
 	Params.ChunkOriginLocation = FVector3f(ChunkLocation);
 	Params.ChunkSize = ChunkSize;
 	Params.PlanetRadius = PlanetData->PlanetRadius;
-	Params.NoiseHeight = PlanetData->noiseHeight;
+	Params.NoiseHeight = PlanetData->NoiseHeight;
 	Params.BiomeMap = BiomeMap;
 	Params.CurveAtlas = PlanetData->CurveAtlas;
 	Params.BiomeDataTexture = GPUBiomeData;
@@ -248,9 +237,9 @@ void UChunkComponent::GenerateChunk()
 				
 					UVs.Add(FVector2f((float)x / (float)VerticesAmount, (float)y / (float)VerticesAmount));
 
-					float noise = ((FVector(Vertices[x + y * VerticesAmount]) + ChunkLocation).Size() - PlanetData->PlanetRadius) / PlanetData->noiseHeight;
+					float noise = ((FVector(Vertices[x + y * VerticesAmount]) + ChunkLocation).Size() - PlanetData->PlanetRadius) / PlanetData->NoiseHeight;
 				
-					float noiseheight = noise * PlanetData->noiseHeight;
+					float noiseheight = noise * PlanetData->NoiseHeight;
 					if (noiseheight > LocalChunkMaxHeight)
 					{
 						LocalChunkMaxHeight = noiseheight;
@@ -408,7 +397,7 @@ void UChunkComponent::CompleteChunkGeneration()
 							return;
 						}
 				
-						if (Foliage.FoliageDistance >= PlanetData->maxRecursionLevel - recursionLevel)
+						if (Foliage.FoliageDistance >= PlanetData->MaxRecursionLevel - recursionLevel)
 						{
 							FFoliageRuntimeDataS RuntimeData;
 							
@@ -420,7 +409,7 @@ void UChunkComponent::CompleteChunkGeneration()
 								Density = Density * FoliageDensityScale;
 							}
 
-							if (Foliage.LowPolyActivation <= PlanetData->maxRecursionLevel - recursionLevel && Foliage.LowPolyMesh != nullptr)
+							if (Foliage.LowPolyActivation <= PlanetData->MaxRecursionLevel - recursionLevel && Foliage.LowPolyMesh != nullptr)
 							{
 								Density = Density * Foliage.FarFoliageDensityScale;
 							}
@@ -617,7 +606,7 @@ void UChunkComponent::UploadChunk()
 
 		TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
 		
-		NaniteBuilder.PositionPrecision = -(PlanetData->maxRecursionLevel - recursionLevel) + 3;
+		NaniteBuilder.PositionPrecision = -(PlanetData->MaxRecursionLevel - recursionLevel) + 3;
 		NaniteBuilder.Mesh.Indices = Indices;
 		NaniteBuilder.Mesh.Positions = Positions;
 		NaniteBuilder.bCompressVertices = true;
@@ -734,9 +723,9 @@ void UChunkComponent::AssignComponents()
 	MaterialInst = ChunkSMC->CreateDynamicMaterialInstance(0, PlanetData->PlanetMaterial);
 	MaterialInst->SetTextureParameterValue("BiomeMap", BiomeMap);
 	MaterialInst->SetTextureParameterValue("BiomeData", GPUBiomeData);
-	MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->maxRecursionLevel - recursionLevel);
+	MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->MaxRecursionLevel - recursionLevel);
 	MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
-	MaterialInst->SetScalarParameterValue("NoiseHeight", PlanetData->noiseHeight);
+	MaterialInst->SetScalarParameterValue("NoiseHeight", PlanetData->NoiseHeight);
 	MaterialInst->SetScalarParameterValue("ChunkSize", ChunkSize);
 	MaterialInst->SetVectorParameterValue("ComponentLocation", ChunkLocation);
 	
@@ -771,7 +760,7 @@ void UChunkComponent::AssignComponents()
 		NoiseHeightInfo.Name = "NoiseHeight";
 		NoiseHeightInfo.Association = EMaterialParameterAssociation::LayerParameter;
 		NoiseHeightInfo.Index = i;
-		MaterialInst->SetScalarParameterValueByInfo(NoiseHeightInfo, PlanetData->noiseHeight);
+		MaterialInst->SetScalarParameterValueByInfo(NoiseHeightInfo, PlanetData->NoiseHeight);
 
 		FMaterialParameterInfo ChunkSizeInfo;
 		ChunkSizeInfo.Name = "ChunkSize";
@@ -789,7 +778,7 @@ void UChunkComponent::AssignComponents()
 		RecursionInfo.Name = "recursionLevel";
 		RecursionInfo.Association = EMaterialParameterAssociation::LayerParameter;
 		RecursionInfo.Index = i;
-		MaterialInst->SetScalarParameterValueByInfo(RecursionInfo, PlanetData->maxRecursionLevel - recursionLevel);
+		MaterialInst->SetScalarParameterValueByInfo(RecursionInfo, PlanetData->MaxRecursionLevel - recursionLevel);
 	}
 	
 
@@ -845,7 +834,7 @@ void UChunkComponent::AddWaterChunk()
 	WaterChunk->ResetSceneVelocity();
 	
 	
-	if (recursionLevel != PlanetData->maxRecursionLevel)
+	if (recursionLevel != PlanetData->MaxRecursionLevel)
 	{
 		if (WaterChunk->GetStaticMesh() != FarWaterMesh)
 		{

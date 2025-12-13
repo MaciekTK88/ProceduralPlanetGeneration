@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-//#include "RealtimeMeshActor.h"
+
 #include "ChunkComponent.h"
 #include "GameFramework/Actor.h"
 #include "PlanetData.h"
@@ -29,9 +29,8 @@ struct FChunkTree
 
 	~FChunkTree()
 	{
-		if (Child1 != nullptr)
+		if (Child1)
 		{
-			//GEngine->AddOnScreenDebugMessage(-1, 15.0f, FColor::Red, FString::Printf(TEXT("zzzzzz")));
 			delete Child1;
 			delete Child2;
 			delete Child3;
@@ -57,7 +56,7 @@ struct FChunkTree
 			AllChildChunks.Add(this);
 			return;
 		}
-		if (Child1 != nullptr)
+		if (Child1)
 		{
 			Child1->AddChunksToRemove(AllChildChunks, true);
 			Child2->AddChunksToRemove(AllChildChunks, true);
@@ -176,6 +175,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Water")
 	UStaticMesh* CloseWaterMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance")
+	int32 MaxChunkCompletionsPerFrame = 2;
 
 	UPROPERTY(BlueprintReadWrite)
 	bool SaveToGenerate = false;
