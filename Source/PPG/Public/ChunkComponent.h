@@ -148,9 +148,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	int PlanetType = 0;
 
-	UPROPERTY()
-	TArray<UChunkComponent*> ChunksToRemove;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	float ChunkMaxHeight = 0;
 

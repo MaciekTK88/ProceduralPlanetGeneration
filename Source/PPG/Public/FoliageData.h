@@ -11,6 +11,24 @@
  */
 
 USTRUCT(BlueprintType)
+struct FFoliageLOD
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	UStaticMesh* Mesh;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	int ActivationStep = 0;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	bool EnableWPO = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	float DensityScale = 1.0f;
+};
+
+USTRUCT(BlueprintType)
 struct FFoliageListS
 {
 	GENERATED_BODY()
@@ -48,8 +66,7 @@ struct FFoliageListS
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float WPODisableDistance = 10000.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	bool FarFoliageWPO = false;
+
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float MinHeight = 0.0f;
@@ -66,14 +83,9 @@ struct FFoliageListS
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool AbsoluteHeight = false;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	UStaticMesh* LowPolyMesh;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	int LowPolyActivation;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float FarFoliageDensityScale = 1;
+
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool ScalableDensity = false;
@@ -86,6 +98,9 @@ struct FFoliageListS
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	uint8 ShadowDisableDistance = 0;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	TArray<FFoliageLOD> LODs;
 
 };
 

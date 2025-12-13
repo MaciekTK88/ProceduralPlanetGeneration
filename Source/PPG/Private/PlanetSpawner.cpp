@@ -89,10 +89,8 @@ void APlanetSpawner::ClearComponents()
 	// Destroy chunks
 	for (UChunkComponent* Chunk : Chunks)
 	{
-		Chunk->ChunksToRemove.Empty();
 		Chunk->AbortAsync = true;
-		Chunk->FreeComponents();
-		Chunk->SelfDestruct();
+		Chunk->ConditionalBeginDestroy();
 	}
 	Chunks.Empty();
 

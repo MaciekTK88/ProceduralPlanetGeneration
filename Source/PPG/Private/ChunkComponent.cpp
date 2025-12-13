@@ -111,30 +111,55 @@ void UChunkComponent::SpawnFoliageComponent(FFoliageRuntimeDataS& Data)
 	Ismc->ShadowCacheInvalidationBehavior = EShadowCacheInvalidationBehavior::Always;
 	Ismc->SetCanEverAffectNavigation(false);
 
-	if (Data.Foliage.ShadowDisableDistance <= PlanetData->MaxRecursionLevel - recursionLevel && Data.Foliage.ShadowDisableDistance != 0)
+	int DistanceStep = PlanetData->MaxRecursionLevel - recursionLevel;
+
+	UStaticMesh* SelectedMesh = Data.Foliage.FoliageMesh;
+	bool SelectedWPO = Data.Foliage.WPO;
+	bool IsLOD = false;
+
+	// Check for Multi-LODs
+	if (Data.Foliage.LODs.Num() > 0)
+	{
+		int BestStep = -1;
+		for (const FFoliageLOD& LOD : Data.Foliage.LODs)
+		{
+			if (LOD.Mesh && DistanceStep >= LOD.ActivationStep)
+			{
+				if (LOD.ActivationStep > BestStep)
+				{
+					BestStep = LOD.ActivationStep;
+					SelectedMesh = LOD.Mesh;
+					SelectedWPO = LOD.EnableWPO;
+					IsLOD = true;
+				}
+			}
+		}
+	}
+	
+	Ismc->SetStaticMesh(SelectedMesh);
+	Ismc->SetEvaluateWorldPositionOffset(SelectedWPO);
+
+	// Apply Shadows based on Distance
+	if (Data.Foliage.ShadowDisableDistance <= DistanceStep && Data.Foliage.ShadowDisableDistance != 0)
 	{
 		Ismc->CastShadow = false;
 		Ismc->bCastContactShadow = false;
 		Ismc->SetVisibleInRayTracing(false);
 	}
 
-	if (Data.Foliage.CollisionEnableDistance >= PlanetData->MaxRecursionLevel - recursionLevel && Data.Foliage.CollisionEnableDistance != 0 && Data.Foliage.Collision == true)
+	if (IsLOD)
 	{
-		Ismc->bDisableCollision = false;
-	}
-
-	if (Data.Foliage.LowPolyActivation <= PlanetData->MaxRecursionLevel - recursionLevel && Data.Foliage.LowPolyMesh != nullptr)
-	{
-		Ismc->SetStaticMesh(Data.Foliage.LowPolyMesh);
-		Ismc->SetEvaluateWorldPositionOffset(Data.Foliage.FarFoliageWPO);
 		Ismc->bAffectDistanceFieldLighting = false;
 		Ismc->SetVisibleInRayTracing(false);
 		Ismc->bDisableCollision = true;
-
 	}
 	else
 	{
-		Ismc->SetStaticMesh(Data.Foliage.FoliageMesh);
+		// Base Mesh Collision Logic
+		if (Data.Foliage.CollisionEnableDistance >= DistanceStep && Data.Foliage.CollisionEnableDistance != 0 && Data.Foliage.Collision == true)
+		{
+			Ismc->bDisableCollision = false;
+		}
 	}
 
 	//hismc->bIsAsyncBuilding = true;
@@ -409,9 +434,24 @@ void UChunkComponent::CompleteChunkGeneration()
 								Density = Density * FoliageDensityScale;
 							}
 
-							if (Foliage.LowPolyActivation <= PlanetData->MaxRecursionLevel - recursionLevel && Foliage.LowPolyMesh != nullptr)
+							if (Foliage.LODs.Num() > 0)
 							{
-								Density = Density * Foliage.FarFoliageDensityScale;
+								int DistanceStep = PlanetData->MaxRecursionLevel - recursionLevel;
+								int BestStep = -1;
+								float CurrentLODDensityScale = 1.0f;
+
+								for (const FFoliageLOD& LOD : Foliage.LODs)
+								{
+									if (DistanceStep >= LOD.ActivationStep)
+									{
+										if (LOD.ActivationStep > BestStep)
+										{
+											BestStep = LOD.ActivationStep;
+											CurrentLODDensityScale = LOD.DensityScale;
+										}
+									}
+								}
+								Density = Density * CurrentLODDensityScale;
 							}
 
 							//LocalFoliageTransform.Empty();
@@ -963,11 +1003,6 @@ void UChunkComponent::FreeComponents()
 			FoliageRuntimeData[i].Ismc->DestroyComponent();
 		}
 	}
-
-	for (UChunkComponent* Chunk : ChunksToRemove)
-	{
-		Chunk->FreeComponents();
-	}
 }
 
 
@@ -983,8 +1018,6 @@ void UChunkComponent::BeginSelfDestruct()
 void UChunkComponent::SelfDestruct()
 {
 	FreeComponents();
-	ChunksToRemove.Empty();
-	
 	WaterChunk = nullptr;
 	
 
