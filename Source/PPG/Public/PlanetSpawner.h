@@ -11,44 +11,22 @@
 #include "PlanetSpawner.generated.h"
 
 
-USTRUCT()
+
 struct FChunkTree
 {
-	GENERATED_BODY()
 
-	FChunkTree* Child1 = nullptr;
-	FChunkTree* Child2 = nullptr;
-	FChunkTree* Child3 = nullptr;
-	FChunkTree* Child4 = nullptr;
+
+	TUniquePtr<FChunkTree> Child1;
+	TUniquePtr<FChunkTree> Child2;
+	TUniquePtr<FChunkTree> Child3;
+	TUniquePtr<FChunkTree> Child4;
 
 	UChunkComponent* ChunkMesh = nullptr;
 	
 	float MaxChunkHeight = 0;
 
-	void GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* planet, FChunkTree* ParentMesh);
-
-	~FChunkTree()
-	{
-		if (Child1)
-		{
-			delete Child1;
-			delete Child2;
-			delete Child3;
-			delete Child4;
-
-			Child1 = nullptr;
-			Child2 = nullptr;
-			Child3 = nullptr;
-			Child4 = nullptr;
-		}
-
-		if (ChunkMesh != nullptr)
-		{
-			ChunkMesh = nullptr;
-		}
-
-	}
-
+	void GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* Planet, FChunkTree* ParentMesh);
+	
 	void AddChunksToRemove(TArray<FChunkTree*>& AllChildChunks, bool remove)
 	{
 		if (remove && ChunkMesh != nullptr)
@@ -89,7 +67,7 @@ public:
 	bool SafetyCheck();
 
 	UFUNCTION(BlueprintCallable, Category = "Foliage")
-	AActor* getFoliageActor();
+	AActor* GetFoliageActor();
 
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadWrite)
 	UInstancedStaticMeshComponent* WaterMeshInst;
@@ -107,6 +85,7 @@ protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual bool ShouldTickIfViewportsOnly() const override;
 
 #if WITH_EDITOR
 	// Called after properties are initialized
@@ -126,13 +105,11 @@ protected:
 
 public:
 	
-	virtual bool ShouldTickIfViewportsOnly() const override;
-	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere)
-	bool UseEditorTick = true;
+	bool bUseEditorTick = true;
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
 	void DestroyChunkTrees();
@@ -147,19 +124,19 @@ public:
 	int ChunkQuality = 191;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool GenerateCollisions = true;
+	bool bGenerateCollisions = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool GenerateFoliage = true;
+	bool bGenerateFoliage = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool GenerateRayTracingProxy = true;
+	bool bGenerateRayTracingProxy = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	int CollisionDisableDistance = 3;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool AsyncInitBody = false;
+	bool bAsyncInitBody = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	float GlobalFoliageDensityScale = 1.0f;
@@ -179,14 +156,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Performance")
 	int32 MaxChunkCompletionsPerFrame = 2;
 
-	UPROPERTY(BlueprintReadWrite)
-	bool SaveToGenerate = false;
-
 	UPROPERTY()
 	TArray<uint32> Triangles;
-
-	UPROPERTY(BlueprintReadWrite)
-	bool ready = false;
 
 	UPROPERTY()
 	uint8 MaterialLayersNum = 0;
@@ -202,21 +173,16 @@ public:
 
 	UPROPERTY(BlueprintReadWrite)
 	TArray<UStaticMeshComponent*> WaterSMCPool;
-
-
-	FVector WorldLocation;
-	int Chunkcount = 0;
+	
 	FVector CharacterLocation;
-
-	int ChunkCounter = 0;
-	int ChunkSpawned = 0;
-	bool Loading = true;
+	
+	bool bIsLoading = true;
 
 	//virtual void Shutdown();
 
 private:
 	FChunkTree ChunkTree1, ChunkTree2, ChunkTree3, ChunkTree4, ChunkTree5, ChunkTree6;
-	
+
 	UPROPERTY()
 	AActor* FoliageActor;
 

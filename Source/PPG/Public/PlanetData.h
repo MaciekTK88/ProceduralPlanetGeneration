@@ -29,11 +29,11 @@ struct FBiomeDataS
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
 	uint8 MaterialLayerIndex = 0;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FoliageSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FoliageSetup", meta = (ToolTip = "Foliage data asset"))
 	UFoliageData* FoliageData;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
-	bool GenerateForest = true;
+	bool bGenerateForest = true;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
 	UFoliageData* ForestFoliageData;
@@ -77,7 +77,7 @@ public:
 	UMaterialInterface* PlanetMaterial;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
-	bool GenerateWater = false;
+	bool bGenerateWater = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
 	UMaterialInterface* CloseWaterMaterial;
@@ -87,8 +87,8 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
 	int RecursionLevelForMaterialChange = 3;
-
 	
+
 
 	FVector PlanetTransformLocation(const FVector& TransformPos, const FIntVector TransformRotDeg, const FVector& LocalLocation)
 	{

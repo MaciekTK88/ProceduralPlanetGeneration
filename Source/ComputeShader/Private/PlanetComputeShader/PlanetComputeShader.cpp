@@ -120,29 +120,36 @@ private:
 IMPLEMENT_GLOBAL_SHADER(FPlanetComputeShader, "/ComputeShaderShaders/Planet.usf", "PlanetComputeShader", SF_Compute);
 
 void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediate& RHICmdList, FPlanetComputeShaderDispatchParams Params, TFunction<void(TArray<float> OutputVal, TArray<uint8> OutputVCVal)> AsyncCallback) {
-	FRDGBuilder GraphBuilder(RHICmdList);
+	typename FPlanetComputeShader::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FPlanetComputeShader::FPlanetComputeShader_Perm_TEST>(Params.PlanetType);
 
+	TShaderMapRef<FPlanetComputeShader> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
+
+	if (ComputeShader.IsValid())
 	{
-		SCOPE_CYCLE_COUNTER(STAT_PlanetComputeShader_Execute);
-		DECLARE_GPU_STAT(PlanetComputeShader);
-		RDG_EVENT_SCOPE(GraphBuilder, "PlanetComputeShader");
-		RDG_GPU_STAT_SCOPE(GraphBuilder, PlanetComputeShader);
-		
-		typename FPlanetComputeShader::FPermutationDomain PermutationVector;
-		
-		// Add any static permutation options here
-		// PermutationVector.Set<FExampleComputeShader::FMyPermutationName>(12345);
-		PermutationVector.Set<FPlanetComputeShader::FPlanetComputeShader_Perm_TEST>(Params.PlanetType);
+		if (Params.BiomeMap == nullptr || Params.BiomeMap->GetResource() == nullptr || Params.CurveAtlas == nullptr || Params.CurveAtlas->GetResource() == nullptr || Params.BiomeDataTexture == nullptr || Params.BiomeDataTexture->GetResource() == nullptr)
+		{
+			FString ResourceStatus = FString::Printf(TEXT("BiomeMap: %s (Res: %s), CurveAtlas: %s (Res: %s), BiomeData: %s (Res: %s)"), 
+				Params.BiomeMap ? TEXT("Valid") : TEXT("NULL"),
+				(Params.BiomeMap && Params.BiomeMap->GetResource()) ? TEXT("Valid") : TEXT("NULL"),
+				Params.CurveAtlas ? TEXT("Valid") : TEXT("NULL"),
+				(Params.CurveAtlas && Params.CurveAtlas->GetResource()) ? TEXT("Valid") : TEXT("NULL"),
+				Params.BiomeDataTexture ? TEXT("Valid") : TEXT("NULL"),
+				(Params.BiomeDataTexture && Params.BiomeDataTexture->GetResource()) ? TEXT("Valid") : TEXT("NULL")
+			);
+			UE_LOG(LogTemp, Error, TEXT("Planet Compute Shader: Invalid Resources! Status: %s"), *ResourceStatus);
+			return;
+		}
 
-		TShaderMapRef<FPlanetComputeShader> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
-		
+		FRDGBuilder GraphBuilder(RHICmdList);
+		{
+			SCOPE_CYCLE_COUNTER(STAT_PlanetComputeShader_Execute);
+			DECLARE_GPU_STAT(PlanetComputeShader);
+			RDG_EVENT_SCOPE(GraphBuilder, "PlanetComputeShader");
+			RDG_GPU_STAT_SCOPE(GraphBuilder, PlanetComputeShader);
 
-		bool bIsShaderValid = ComputeShader.IsValid();
-
-		if (bIsShaderValid) {
 			FPlanetComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FPlanetComputeShader::FParameters>();
 			
-
 			FRDGTextureRef RenderTargetRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.BiomeMap->GetResource()->TextureRHI, TEXT("BiomeMap")));
 			PassParameters->BiomeMap = GraphBuilder.CreateUAV(RenderTargetRDG);
 
@@ -162,19 +169,22 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 			PassParameters->planetRadius = Params.PlanetRadius;
 			PassParameters->noiseHeight = Params.NoiseHeight;
 			
+			int32 NumVertices = Params.X * Params.Y;
+			int32 NumDataPoints = NumVertices * 3;
+
 			FRDGBufferRef OutputBuffer = GraphBuilder.CreateBuffer(
-				FRDGBufferDesc::CreateBufferDesc(sizeof(float), 110592),
+				FRDGBufferDesc::CreateBufferDesc(sizeof(float), NumDataPoints),
 				TEXT("OutputBuffer"));
 
 			PassParameters->Output = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBuffer, PF_R32_FLOAT));
 
 			FRDGBufferRef OutputBufferVC = GraphBuilder.CreateBuffer(
-			FRDGBufferDesc::CreateBufferDesc(sizeof(uint8), 110592),
+			FRDGBufferDesc::CreateBufferDesc(sizeof(uint8), NumDataPoints),
 			TEXT("OutputBufferVC"));
 
 			PassParameters->OutputVC = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBufferVC, PF_R8_UINT));
 			
-
+			// Group count optimization
 			auto GroupCount = FComputeShaderUtils::GetGroupCount(FIntPoint(Params.X, Params.Y), FIntPoint(16, 16));
 			GraphBuilder.AddPass(
 				RDG_EVENT_NAME("ExecutePlanetComputeShader"),
@@ -186,37 +196,41 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 			});
 
 			
-			FRHIGPUBufferReadback* GPUBufferReadback = new FRHIGPUBufferReadback(TEXT("ExecutePlanetComputeShaderOutput"));
-			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback, OutputBuffer, 0u);
+			TSharedPtr<FRHIGPUBufferReadback> GPUBufferReadback = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutput"));
+			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback.Get(), OutputBuffer, 0u);
 			
-			FRHIGPUBufferReadback* GPUBufferReadbackVC = new FRHIGPUBufferReadback(TEXT("ExecutePlanetComputeShaderOutputVC"));
-			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadbackVC, OutputBufferVC, 0u);
+			TSharedPtr<FRHIGPUBufferReadback> GPUBufferReadbackVC = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutputVC"));
+			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadbackVC.Get(), OutputBufferVC, 0u);
 
-			auto RunnerFunc = [GPUBufferReadback, GPUBufferReadbackVC, AsyncCallback](auto&& RunnerFunc) -> void {
-				if (GPUBufferReadback->IsReady() && GPUBufferReadbackVC->IsReady()) {
-					const uint32 NumValues = 110592;
+			auto RunnerFunc = [GPUBufferReadback, GPUBufferReadbackVC, AsyncCallback, NumDataPoints](auto&& RunnerFunc) -> void {
+				if (GPUBufferReadback->IsReady() && GPUBufferReadbackVC->IsReady())
+				{
+					
 					// Read main output
-					float* Buffer = (float*)GPUBufferReadback->Lock(110592 * sizeof(float));
+					float* Buffer = (float*)GPUBufferReadback->Lock(NumDataPoints * sizeof(float));
 					TArray<float> OutVal;
-					OutVal.SetNumUninitialized(NumValues);
-					FMemory::Memcpy(OutVal.GetData(), Buffer, NumValues * sizeof(float));
+					OutVal.SetNumUninitialized(NumDataPoints);
+					FMemory::Memcpy(OutVal.GetData(), Buffer, NumDataPoints * sizeof(float));
 					GPUBufferReadback->Unlock();
 
 					// Read vertex colors output
-					uint8* BufferVC = (uint8*)GPUBufferReadbackVC->Lock(110592 * sizeof(uint8));
+					uint8* BufferVC = (uint8*)GPUBufferReadbackVC->Lock(NumDataPoints * sizeof(uint8));
 					TArray<uint8> OutValVC;
-					OutValVC.SetNumUninitialized(NumValues);
-					FMemory::Memcpy(OutValVC.GetData(), BufferVC, NumValues * sizeof(uint8));
+					OutValVC.SetNumUninitialized(NumDataPoints);
+					FMemory::Memcpy(OutValVC.GetData(), BufferVC, NumDataPoints * sizeof(uint8));
 					GPUBufferReadbackVC->Unlock();
 
-					AsyncTask(ENamedThreads::GameThread, [AsyncCallback, OutVal, OutValVC]() {
+					AsyncTask(ENamedThreads::GameThread, [AsyncCallback, OutVal, OutValVC]()
+					{
 						AsyncCallback(OutVal, OutValVC);
 					});
 
-					delete GPUBufferReadback;
-					delete GPUBufferReadbackVC;
-				} else {
-					AsyncTask(ENamedThreads::ActualRenderingThread, [RunnerFunc]() {
+					// TSharedPtr handles destruction
+				}
+				else 
+				{
+					AsyncTask(ENamedThreads::ActualRenderingThread, [RunnerFunc]()
+					{
 						RunnerFunc(RunnerFunc);
 					});
 				}
@@ -226,15 +240,13 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 				RunnerFunc(RunnerFunc);
 			});
 			
-		} else {
-			#if WITH_EDITOR
-				GEngine->AddOnScreenDebugMessage((uint64)42145125184, 6.f, FColor::Red, FString(TEXT("The compute shader has a problem.")));
-			#endif
-
-			// We exit here as we don't want to crash the game if the shader is not found or has an error.
-			
 		}
+		GraphBuilder.Execute();
 	}
-
-	GraphBuilder.Execute();
+	else
+	{
+		#if WITH_EDITOR
+			GEngine->AddOnScreenDebugMessage((uint64)42145125184, 6.f, FColor::Red, FString(TEXT("The compute shader has a problem.")));
+		#endif
+	}
 }

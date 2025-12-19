@@ -37,10 +37,10 @@ class PPG_API UChunkComponent : public UObject
 	GENERATED_BODY()
 
 	UPROPERTY()
-	int VerticesAmount = 192;
+	int VerticesCount = 192;
 
 	UPROPERTY()
-	float Size = 100.0f;
+	float TriangleSize = 100.0f;
 
 
 
@@ -48,10 +48,9 @@ class PPG_API UChunkComponent : public UObject
 public:
 	// Sets default values for this actor's properties
 	UChunkComponent();
-	float queue = 0;
 
 	UPROPERTY()
-	bool NaniteLandscape = true;
+	bool bNaniteLandscape = true;
 
 	UPROPERTY()
 	UPlanetData* PlanetData;
@@ -59,7 +58,7 @@ public:
 	enum class EChunkStatus : uint8 {
 		EMPTY = 0,
 		GENERATING = 1,
-		PENDING_ASSIGN = 2,  // Async work done, waiting for AssignComponents
+		PENDING_ASSIGN = 2,
 		READY = 3,
 		REMOVING = 4,
 		ABORTED = 5
@@ -72,28 +71,22 @@ public:
 	UTexture2D* GPUBiomeData;
 
 	UPROPERTY()
-	float ChunkSize = 200;
+	bool bGenerateCollisions = true;
 
 	UPROPERTY()
-	int ChunkQuality = 200;
-
-	UPROPERTY()
-	bool GenerateCollisions = true;
-
-	UPROPERTY()
-	bool GenerateRayTracingProxy = true;
+	bool bGenerateRayTracingProxy = true;
 
 	UPROPERTY()
 	int CollisionDisableDistance = 3;
 
 	UPROPERTY()
-	bool GenerateFoliage = true;
+	bool bGenerateFoliage = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "ChunkSetup")
 	float FoliageDensityScale = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	bool ready = false;
+	bool bIsReady = false;
 
 	UFUNCTION(BlueprintCallable, Category = "BuildChunk")
 	void GenerateChunk();
@@ -128,28 +121,38 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "DestroyChunk")
 	void SelfDestruct();
 
-	
-	
-	TArray<UStaticMeshComponent*>* ChunkSMCPool;
-	
-	TArray<UInstancedStaticMeshComponent*>* FoliageISMCPool;
+	void SetSharedResources(TArray<UStaticMeshComponent*>* InChunkSMCPool, TArray<UInstancedStaticMeshComponent*>* InFoliageISMCPool, TArray<UStaticMeshComponent*>* InWaterSMCPool, TArray<uint32>* InTriangles);
+	void InitializeChunk(float InChunkWorldSize, int InRecursionLevel, int InPlanetType, FVector InChunkLocation, FVector InPlanetSpaceLocation, FIntVector InPlanetSpaceRotation, float InChunkMaxHeight, uint8 InMaterialLayersNum, UStaticMesh* InCloseWaterMesh, UStaticMesh* InFarWaterMesh);
 
-	TArray<UStaticMeshComponent*>* WaterSMCPool;
+	void SetAbortAsync(bool bInAbortAsync) { bAbortAsync = bInAbortAsync; }
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Foliage")
+protected:
+	void ProcessChunkData(const TArray<float>& OutputVal, const TArray<uint8>& OutputVCVal);
+
+	UPROPERTY()
 	int SpawnAtOnce = 10;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	FVector ChunkLocation;
+	UPROPERTY()
+	FVector ChunkOriginLocation;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
-	int recursionLevel = 0;
+	UPROPERTY()
+	int RecursionLevel = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY()
 	int PlanetType = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
+	UPROPERTY()
 	float ChunkMaxHeight = 0;
+	
+	UPROPERTY()
+	float ChunkSize = 200;
+
+	UPROPERTY()
+	int ChunkQuality = 191;
+
+public:
+	float GetChunkMaxHeight() const { return ChunkMaxHeight; }
+protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ChunkSetup")
 	double ChunkMinHeight = 0;
@@ -164,10 +167,10 @@ public:
 	UTextureRenderTarget2D* BiomeMap;
 	
 	UPROPERTY()
-	bool DataGenerated = false;
+	bool bDataGenerated = false;
 
 	UPROPERTY()
-	bool AbortAsync = false;
+	bool bAbortAsync = false;
 
 	UPROPERTY()
 	uint8 MaterialLayersNum = 0;
@@ -180,6 +183,13 @@ public:
 
 	UPROPERTY()
 	UStaticMeshComponent* ChunkSMC;
+
+protected:
+	TArray<UStaticMeshComponent*>* ChunkSMCPool;
+	TArray<UInstancedStaticMeshComponent*>* FoliageISMCPool;
+	TArray<UStaticMeshComponent*>* WaterSMCPool;
+
+public:
 
 	UPROPERTY()
 	UStaticMesh* ChunkStaticMesh;
@@ -217,10 +227,10 @@ private:
 	//TArray<UFoliageData*> FoliageBiomes;
 
 	UPROPERTY()
-	bool bRaytracing = false;
+	bool bRayTracing = false;
 
 	UPROPERTY()
-	bool Collisions = false;
+	bool bCollisions = false;
 
 	UPROPERTY()
 	UStaticMeshComponent* WaterChunk;
@@ -237,6 +247,8 @@ private:
 	UMaterialInstanceDynamic* WaterMaterialInst;
 	
 	UPROPERTY()
+	UStaticMesh* GeneratedMesh;
+	
 	TArray<FFoliageRuntimeDataS> FoliageRuntimeData;
 
 	UPROPERTY()

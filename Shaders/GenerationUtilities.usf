@@ -357,7 +357,7 @@ void WritePlanetData(
     int verticesAmount = chunkQuality + 1;
     
     uint3 top3MaterialLayerIndices = uint3(ReadBiomeDataTexture(terrainData.top3BiomeIndices.x, 4), ReadBiomeDataTexture(terrainData.top3BiomeIndices.y, 4), ReadBiomeDataTexture(terrainData.top3BiomeIndices.z, 4));
-    BiomeMap[DispatchThreadID.xy] = float4(float3(float(top3MaterialLayerIndices.x) / 255.0, float(top3MaterialLayerIndices.y) / 255.0, float(top3MaterialLayerIndices.z) / 255.0), (clamp(terrainData.finalElevation, -1, 0) + 1));
+    BiomeMap[DispatchThreadID.xy] = float4(float3(float(top3MaterialLayerIndices.x) / 255.0, float(top3MaterialLayerIndices.y) / 255.0, float(top3MaterialLayerIndices.z) / 255.0), (clamp(terrainData.finalElevation, -1.0, 0.0) + 1.0));
     BiomeMap[DispatchThreadID.xy + int2(0, verticesAmount)] = float4(terrainData.top3BiomeStrengths, 1.0);
 
     uint index = (DispatchThreadID.y * verticesAmount + DispatchThreadID.x) * 3;
