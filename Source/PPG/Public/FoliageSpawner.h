@@ -15,6 +15,6 @@ public:
 	AFoliageSpawner();
 
 protected:
-	UPROPERTY(VisibleAnywhere)
-	USceneComponent* Root;   // root scene component
+	UPROPERTY(VisibleAnywhere, Category = "Foliage")
+	TObjectPtr<USceneComponent> Root;
 };

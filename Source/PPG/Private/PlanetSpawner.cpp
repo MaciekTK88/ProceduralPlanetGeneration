@@ -6,12 +6,354 @@
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "Engine/TextureRenderTarget2D.h"
-
+#include "LevelEditorViewport.h"
 #include "Engine/GameEngine.h"
 #include "Engine/StaticMeshActor.h"
-#include "ChunkComponent.h"
+#include "ChunkObject.h"
 #include "FoliageSpawner.h"
 #include "Components/InstancedStaticMeshComponent.h"
+
+
+void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* Planet, FChunkTree* ParentGeneratedChunk)
+{
+
+	bool bChildChunksReady = true;
+	
+	if (ChunkObject != nullptr)
+	{
+		TArray<FChunkTree*> ChildChunks;
+		FindConfiguredChunks(ChildChunks, false);
+		
+		if (ChildChunks.IsEmpty())
+		{
+			bChildChunksReady = false;
+		}
+		else
+		{
+			for (int32 i = 0; i < ChildChunks.Num(); i++)
+			{
+				if (ChildChunks[i]->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::READY)
+				{
+					bChildChunksReady = false;
+					break;
+				}
+			}
+		}
+	}
+	
+	if (ChunkObject && ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU)
+	{
+		ChunkObject->TickGPUReadback();
+	}
+	
+	FVector ChunkLocalOrigin = FVector(LocalChunkSize / 2, LocalChunkSize / 2, 0.0f);
+	FVector ChunkOriginLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, ChunkLocalOrigin);
+
+	// Transform ChunkOriginLocation to -1, 1 range
+	float RootChunkSize = Planet->PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
+	ChunkOriginLocation = ChunkOriginLocation / (RootChunkSize / 2.0f);
+
+	// Apply deformation (makes distribution on sphere more uniform)
+	float deformation = 0.75;
+	ChunkOriginLocation.X = tan(ChunkOriginLocation.X * PI * deformation / 4.0);
+	ChunkOriginLocation.Y = tan(ChunkOriginLocation.Y * PI * deformation / 4.0);
+	ChunkOriginLocation.Z = tan(ChunkOriginLocation.Z * PI * deformation / 4.0);
+	
+	// Normalize to make it a unit sphere
+	ChunkOriginLocation.Normalize();
+	
+	if (ChunkObject != nullptr && (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY || ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN))
+	{
+		// If we have a ready chunk, use its max height
+		MaxChunkHeight = ChunkObject->GetChunkMaxHeight();
+	}
+	else if (MaxChunkHeight < 0.01f && Child1 != nullptr && Child1->ChunkObject != nullptr && (Child1->MaxChunkHeight > 0.01f || Child2->MaxChunkHeight > 0.01f || Child3->MaxChunkHeight > 0.01f || Child4->MaxChunkHeight > 0.01f))
+	{
+		// If we don't have a ready chunk, but we have children, use their max heights
+		MaxChunkHeight = FMath::Max(Child1->MaxChunkHeight, Child2->MaxChunkHeight, Child3->MaxChunkHeight, Child4->MaxChunkHeight);
+	}
+	else if (MaxChunkHeight < 0.01f && ParentGeneratedChunk != nullptr)
+	{
+		// If we don't have a ready chunk or children, use parent's max height
+		MaxChunkHeight = ParentGeneratedChunk->MaxChunkHeight;
+	}
+	
+	/*
+	bool ShouldSubdivide = false;
+	FVector ChunkVolumeOriginLocation = ChunkOriginLocation * (Planet->PlanetData->PlanetRadius + MaxChunkHeight / 2.0f);
+	
+	ChunkOriginLocation *= Planet->PlanetData->PlanetRadius;
+
+	// Safety check for root chunk at planet center
+	if (ChunkVolumeOriginLocation.IsNearlyZero())
+	{
+		ChunkVolumeOriginLocation = FVector(0, 0, 1); // Default up direction for safety
+	}
+
+	FVector ChunkNormal = ChunkVolumeOriginLocation.GetSafeNormal();
+
+	// Vector from camera to chunk center (world-space)
+	FVector CameraToChunk = ChunkOriginLocation - Planet->CharacterLocation;
+	float DistToCenter = CameraToChunk.Size();
+	
+	// Height-aware bounding radius (approx) - compute early for proximity checks
+	float ChunkRadius = LocalChunkSize * 0.70710678f; // sqrt(2)/2
+	float DistToSurface = DistToCenter - ChunkRadius;
+
+	// If camera is inside or very close to chunk bounds, always subdivide
+	if (DistToCenter < KINDA_SMALL_NUMBER)
+	{
+		ShouldSubdivide = true;
+	}
+	else if (DistToSurface < LocalChunkSize * 0.5f) // Within half chunk size of bounds
+	{
+		// Camera is very close to or inside chunk - always subdivide
+		ShouldSubdivide = true;
+	}
+	// Recursion limits
+	else if (RecursionLevel < Planet->PlanetData->MinRecursionLevel)
+	{
+		ShouldSubdivide = true;
+	}
+	else if (RecursionLevel >= Planet->PlanetData->MaxRecursionLevel)
+	{
+		ShouldSubdivide = false;
+	}
+	else
+	{
+		// Horizon / Backface Culling
+		FVector ViewDir = CameraToChunk / DistToCenter;
+		float DotResult = FVector::DotProduct(ChunkNormal, ViewDir);
+		constexpr float HorizonBias = 0.5f; // Slightly more permissive
+
+		// Cull only if not root AND chunk is definitely facing away
+		if (RecursionLevel > 0 && DotResult > HorizonBias)
+		{
+			ShouldSubdivide = false;
+		}
+		else
+		{
+			// Screen-Space LOD
+			// GetCurrentFOV() returns DEGREES - convert to radians
+			float FOVDegrees = Planet->GetCurrentFOV();
+			float FOVRad = FMath::DegreesToRadians(FOVDegrees);
+			
+			float TanHalfFOV = FMath::Tan(FOVRad * 0.5f);
+			if (TanHalfFOV < KINDA_SMALL_NUMBER)
+			{
+				ShouldSubdivide = false;
+			}
+			else
+			{
+				// This represents what fraction of screen height the chunk occupies
+				float ScreenOccupancy =
+					(LocalChunkSize / FMath::Max(DistToSurface, 1.0f)) / (2.0f * TanHalfFOV);
+				
+				// Subdivide if chunk takes up more than 40% of screen
+				constexpr float MaxScreenUV = 0.4f;
+
+				ShouldSubdivide = (ScreenOccupancy > MaxScreenUV);
+			}
+		}
+	}
+	*/
+	
+	
+	FVector CharacterSpherePos = Planet->CharacterLocation.GetSafeNormal();
+	// Calculate distance from character to chunk on sphere surface
+	float Distance = Planet->PlanetData->PlanetRadius * FMath::Acos(FVector::DotProduct(ChunkOriginLocation, CharacterSpherePos));
+	Distance = FMath::Sqrt(FMath::Pow(Distance,2) + FMath::Pow((Planet->CharacterLocation.Size() - (MaxChunkHeight + Planet->PlanetData->PlanetRadius)), 2));
+
+	// Scale back to planet radius
+	ChunkOriginLocation *= Planet->PlanetData->PlanetRadius;
+	
+	bool IsWithinLODDistance = (Distance - LocalChunkSize / 2 < LocalChunkSize);
+	if ((RecursionLevel < Planet->PlanetData->MaxRecursionLevel && IsWithinLODDistance) || RecursionLevel < Planet->PlanetData->MinRecursionLevel)
+	{
+		// If we are within LOD distance, or below min recursion level, split chunk
+		
+		if (Child1 == nullptr)
+		{
+			Child1 = MakeShared<FChunkTree>();
+			Child2 = MakeShared<FChunkTree>();
+			Child3 = MakeShared<FChunkTree>();
+			Child4 = MakeShared<FChunkTree>();
+		}
+		
+		FChunkTree* NewParentGeneratedChunk = ParentGeneratedChunk;
+		if (ChunkObject != nullptr && ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY)
+		{
+			NewParentGeneratedChunk = this;
+			ParentGeneratedChunk = nullptr;
+		}
+		
+		if (ChunkObject != nullptr)
+		{
+			// Ready to destroy immediately
+			if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED || 
+				ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN || 
+				ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
+			{
+				ChunkObject->SelfDestruct();
+				ChunkObject = nullptr;
+			}
+			// Parent is READY, waiting for children
+			else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY && bChildChunksReady)
+			{
+				ChunkObject->SelfDestruct();
+				ChunkObject = nullptr;
+			}
+			// Active work needs to be aborted
+			else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::GENERATING || 
+					 ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU ||
+					 ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::REMOVING)
+			{
+				// 1. Ensure GPU readback continues ticking so it can detect the abort flag
+				ChunkObject->TickGPUReadback();
+
+				// 2. Trigger abort if not already triggered
+				if (ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING && !ChunkObject->GetAbortAsync())
+				{
+					ChunkObject->BeginSelfDestruct(false);
+				}
+			}
+		}
+		
+		// Generate Children
+		Child1->GenerateChunks(RecursionLevel + 1, ChunkRotation, ChunkLocation, LocalChunkSize / 2, Planet, NewParentGeneratedChunk);
+
+		FVector NewChunkLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(LocalChunkSize / 2, 0.0f, 0.0f));
+		Child2->GenerateChunks(RecursionLevel + 1, ChunkRotation, NewChunkLocation, LocalChunkSize / 2, Planet, NewParentGeneratedChunk);
+
+		NewChunkLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(0.0f, LocalChunkSize / 2, 0.0f));
+		Child3->GenerateChunks(RecursionLevel + 1, ChunkRotation, NewChunkLocation, LocalChunkSize / 2, Planet, NewParentGeneratedChunk);
+
+		NewChunkLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(LocalChunkSize / 2, LocalChunkSize / 2, 0.0f));
+		Child4->GenerateChunks(RecursionLevel + 1, ChunkRotation, NewChunkLocation, LocalChunkSize / 2, Planet, NewParentGeneratedChunk);
+		
+	}
+	else
+	{
+		if (ChunkObject == nullptr)
+		{
+			
+			ChunkObject = NewObject<UChunkObject>(Planet, UChunkObject::StaticClass(), NAME_None, RF_Transient);
+			
+			
+			ChunkObject->PlanetData = Planet->PlanetData;
+			ChunkObject->SetSharedResources(&Planet->ChunkSMCPool, &Planet->FoliageISMCPool, &Planet->WaterSMCPool, &Planet->Triangles);
+			ChunkObject->InitializeChunk(LocalChunkSize, RecursionLevel, Planet->PlanetData->PlanetType, ChunkLocation, ChunkOriginLocation, ChunkRotation, MaxChunkHeight, Planet->MaterialLayersNum, Planet->CloseWaterMesh, Planet->FarWaterMesh);
+			ChunkObject->SetFoliageActor(Planet->GetFoliageActor());
+			ChunkObject->bGenerateCollisions = Planet->bGenerateCollisions;
+			ChunkObject->bGenerateFoliage = Planet->bGenerateFoliage;
+			ChunkObject->bGenerateRayTracingProxy = Planet->bGenerateRayTracingProxy;
+			ChunkObject->CollisionDisableDistance = Planet->CollisionDisableDistance;
+			ChunkObject->FoliageDensityScale = Planet->GlobalFoliageDensityScale;
+			ChunkObject->GPUBiomeData = Planet->GPUBiomeData;
+		}
+		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION && ChunkObject->GetAbortAsync() == false)
+		{
+			ChunkObject->GenerateChunk();
+		}
+		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED)
+		{
+			ChunkObject->SelfDestruct();
+			ChunkObject = nullptr;
+		}
+		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN)
+		{
+			if (CompletionsThisFrame < Planet->MaxChunkCompletionsPerFrame)
+			{
+				// Process pending chunks with rate limiting
+				ChunkObject->AssignComponents();
+				ChunkObject->ChunkStatus = UChunkObject::EChunkStatus::READY;
+				CompletionsThisFrame++;
+			}
+		}
+		
+		if (ChunkObject != nullptr)
+		{
+			TArray<FChunkTree*> ChildChunks;
+			FindConfiguredChunks(ChildChunks, false, false);
+			
+			if (ChildChunks.IsEmpty())
+			{
+				Child1.Reset();
+				Child2.Reset();
+				Child3.Reset();
+				Child4.Reset();
+			}
+			else
+			{
+				for (int32 i = 0; i < ChildChunks.Num(); i++)
+				{
+					if (ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
+					{
+						ChildChunks[i]->ChunkObject->SelfDestruct();
+						ChildChunks[i]->ChunkObject = nullptr;
+					}
+					else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY && ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY)
+					{
+						ChildChunks[i]->ChunkObject->SelfDestruct();
+						ChildChunks[i]->ChunkObject = nullptr;
+					}
+					else if (ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::GENERATING || 
+					ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU ||
+					ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::REMOVING)
+					{
+						ChildChunks[i]->ChunkObject->TickGPUReadback();
+						
+						if (ChildChunks[i]->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING && !ChildChunks[i]->ChunkObject->GetAbortAsync())
+						{
+							if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY)
+							{
+								ChildChunks[i]->ChunkObject->BeginSelfDestruct(true);
+							}
+							else
+							{
+								ChildChunks[i]->ChunkObject->BeginSelfDestruct(false);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+void FChunkTree::FindConfiguredChunks(TArray<FChunkTree*>& Chunks, bool IncludeSelf, bool bFindFirst)
+{
+	if (IncludeSelf && ChunkObject != nullptr)
+	{
+		Chunks.Add(this);
+		
+		if (bFindFirst)
+		{
+			return;
+		}
+	}
+	if (Child1)
+	{
+		Child1->FindConfiguredChunks(Chunks, true, bFindFirst);
+		Child2->FindConfiguredChunks(Chunks, true, bFindFirst);
+		Child3->FindConfiguredChunks(Chunks, true, bFindFirst);
+		Child4->FindConfiguredChunks(Chunks, true, bFindFirst);
+	}
+}
+		
+void FChunkTree::Reset()
+{
+	Child1.Reset();
+	Child2.Reset();
+	Child3.Reset();
+	Child4.Reset();
+}
+
+
+/*
+ * APlanetSpawner
+ */
+
 
 // Sets default values
 APlanetSpawner::APlanetSpawner()
@@ -44,18 +386,18 @@ void APlanetSpawner::BeginPlay()
 
 	// Check for chunks that need to be removed
 	TArray<FChunkTree*> ChunksToRemove;
-	ChunkTree1.AddChunksToRemove(ChunksToRemove, false);
-	ChunkTree2.AddChunksToRemove(ChunksToRemove, false);
-	ChunkTree3.AddChunksToRemove(ChunksToRemove, false);
-	ChunkTree4.AddChunksToRemove(ChunksToRemove, false);
-	ChunkTree5.AddChunksToRemove(ChunksToRemove, false);
-	ChunkTree6.AddChunksToRemove(ChunksToRemove, false);
+	ChunkTree1.FindConfiguredChunks(ChunksToRemove, false);
+	ChunkTree2.FindConfiguredChunks(ChunksToRemove, false);
+	ChunkTree3.FindConfiguredChunks(ChunksToRemove, false);
+	ChunkTree4.FindConfiguredChunks(ChunksToRemove, false);
+	ChunkTree5.FindConfiguredChunks(ChunksToRemove, false);
+	ChunkTree6.FindConfiguredChunks(ChunksToRemove, false);
 
-	for (int i = 0; i < ChunksToRemove.Num(); i++)
+	for (int32 i = 0; i < ChunksToRemove.Num(); i++)
 	{
-		if (ChunksToRemove[i]->ChunkMesh->ChunkStatus != UChunkComponent::EChunkStatus::REMOVING)
+		if (ChunksToRemove[i]->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING)
 		{
-			ChunksToRemove[i]->ChunkMesh->BeginSelfDestruct();
+			ChunksToRemove[i]->ChunkObject->BeginSelfDestruct(true);
 		}
 	}
 	
@@ -106,10 +448,19 @@ void APlanetSpawner::OnPreBeginPIE(const bool bIsSimulating)
 void APlanetSpawner::ClearComponents()
 {
 	// Destroy chunks
-	for (UChunkComponent* Chunk : Chunks)
+	TArray<FChunkTree*> Chunks;
+	ChunkTree1.FindConfiguredChunks(Chunks, true, false);
+	ChunkTree2.FindConfiguredChunks(Chunks, true, false);
+	ChunkTree3.FindConfiguredChunks(Chunks, true, false);
+	ChunkTree4.FindConfiguredChunks(Chunks, true, false);
+	ChunkTree5.FindConfiguredChunks(Chunks, true, false);
+	ChunkTree6.FindConfiguredChunks(Chunks, true, false);
+	
+	for (FChunkTree* Chunk : Chunks)
 	{
-		Chunk->SetAbortAsync(true);
-		Chunk->ConditionalBeginDestroy();
+		Chunk->ChunkObject->SetAbortAsync(true);
+		Chunk->ChunkObject->SelfDestruct();
+		Chunk->ChunkObject = nullptr;
 	}
 	Chunks.Empty();
 
@@ -155,6 +506,9 @@ void APlanetSpawner::ClearComponents()
 	WaterSMCPool.Empty();
 	
 	DestroyChunkTrees();
+	
+	// Flush all pending render commands to ensure deferred object destruction completes
+	FlushRenderingCommands();
 }
 
 bool APlanetSpawner::ShouldTickIfViewportsOnly() const
@@ -165,34 +519,21 @@ bool APlanetSpawner::ShouldTickIfViewportsOnly() const
 // Called every frame
 void APlanetSpawner::Tick(float DeltaTime)
 {
-	
 	BuildPlanet();
-	
-	// Print Chunks number
-	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Green, FString::Printf(TEXT("Chunks: %d"), Chunks.Num()));
+	FChunkTree::CompletionsThisFrame = 0;
 	
 	// Print WaterSMCPool size
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Blue, FString::Printf(TEXT("WaterSMCPool Size: %d"), WaterSMCPool.Num()));
-
-	// Process pending chunks with rate limiting
-	int32 CompletionsThisFrame = 0;
-	for (UChunkComponent* Chunk : Chunks)
-	{
-		if (Chunk && Chunk->ChunkStatus == UChunkComponent::EChunkStatus::PENDING_ASSIGN)
-		{
-			if (CompletionsThisFrame < MaxChunkCompletionsPerFrame)
-			{
-				Chunk->AssignComponents();
-				Chunk->ChunkStatus = UChunkComponent::EChunkStatus::READY;
-				CompletionsThisFrame++;
-			}
-			else
-			{
-				// Reached limit for this frame
-				break;
-			}
-		}
-	}
+	
+	// Print all chunks count
+	TArray<FChunkTree*> AllChunks;
+	ChunkTree1.FindConfiguredChunks(AllChunks, true, false);
+	ChunkTree2.FindConfiguredChunks(AllChunks, true, false);
+	ChunkTree3.FindConfiguredChunks(AllChunks, true, false);
+	ChunkTree4.FindConfiguredChunks(AllChunks, true, false);
+	ChunkTree5.FindConfiguredChunks(AllChunks, true, false);
+	ChunkTree6.FindConfiguredChunks(AllChunks, true, false);
+	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Green, FString::Printf(TEXT("Total Chunks: %d"), AllChunks.Num()));
 
 	Super::Tick(DeltaTime);
 }
@@ -236,11 +577,11 @@ bool APlanetSpawner::SafetyCheck()
 	return false;
 }
 
+
 AActor* APlanetSpawner::GetFoliageActor()
 {
 	return FoliageActor;
 }
-
 
 
 void APlanetSpawner::BuildPlanet()
@@ -270,6 +611,7 @@ void APlanetSpawner::BuildPlanet()
 		
 		float chunkSize = (PlanetData->PlanetRadius * 2.0f) / FMath::Sqrt(2.0f);
 
+		// Center the planet at (0,0,0)
 		FVector ChunkLocation = FVector(0,0,0) - chunkSize / 2;
 
 		ChunkTree1.GenerateChunks(0, FIntVector(-1, 0, 0), ChunkLocation, chunkSize, this, nullptr);
@@ -282,183 +624,7 @@ void APlanetSpawner::BuildPlanet()
 }
 
 
-void FChunkTree::GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* Planet, FChunkTree* ParentGeneratedChunk)
-{
-	TArray<FChunkTree*> ChildChunks;
-	bool ChildChunksReady = true;
-	
-	if (ChunkMesh != nullptr)
-	{
-		AddChunksToRemove(ChildChunks, false);
-		
-		if (ChildChunks.IsEmpty())
-		{
-			ChildChunksReady = false;
-		}
-		else
-		{
-			for (int i = 0; i < ChildChunks.Num(); i++)
-			{
-				if (ChildChunks[i]->ChunkMesh->ChunkStatus != UChunkComponent::EChunkStatus::READY)
-				{
-					ChildChunksReady = false;
-					break;
-				}
-			}
-		}
-	}
-	
-	FVector ChunkOriginLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(LocalChunkSize / 2, LocalChunkSize / 2, 0.0f));
-
-	// Transform planetSpaceVertex to -1, 1 range
-	float OriginalChunkSize = Planet->PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
-	ChunkOriginLocation = ChunkOriginLocation / (OriginalChunkSize / 2.0f);
-
-	// Apply deformation
-	float deformation = 0.75;
-	ChunkOriginLocation.X = tan(ChunkOriginLocation.X * PI * deformation / 4.0);
-	ChunkOriginLocation.Y = tan(ChunkOriginLocation.Y * PI * deformation / 4.0);
-	ChunkOriginLocation.Z = tan(ChunkOriginLocation.Z * PI * deformation / 4.0);
-	
-	ChunkOriginLocation.Normalize();
-	
-	
-	if (ChunkMesh != nullptr && ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::READY)
-	{
-		MaxChunkHeight = ChunkMesh->GetChunkMaxHeight();
-	}
-	else if (MaxChunkHeight < 0.01f && Child1 != nullptr && Child1->ChunkMesh != nullptr && (Child1->MaxChunkHeight > 0.01f || Child2->MaxChunkHeight > 0.01f || Child3->MaxChunkHeight > 0.01f || Child4->MaxChunkHeight > 0.01f))
-	{
-		MaxChunkHeight = FMath::Max(Child1->MaxChunkHeight, Child2->MaxChunkHeight, Child3->MaxChunkHeight, Child4->MaxChunkHeight);
-	}
-	else if (MaxChunkHeight < 0.01f && ParentGeneratedChunk != nullptr)
-	{
-		MaxChunkHeight = ParentGeneratedChunk->MaxChunkHeight;
-	}
-	
-	
-	FVector CharacterSpherePos = Planet->CharacterLocation.GetSafeNormal();
-	
-	double Distance = Planet->PlanetData->PlanetRadius * FMath::Acos(FVector::DotProduct(ChunkOriginLocation, CharacterSpherePos));
-	Distance = FMath::Sqrt(FMath::Pow(Distance,2) + FMath::Pow((Planet->CharacterLocation.Size() - (MaxChunkHeight + Planet->PlanetData->PlanetRadius)), 2));
-
-	ChunkOriginLocation *= Planet->PlanetData->PlanetRadius;
-	
-
-	if ((RecursionLevel < Planet->PlanetData->MaxRecursionLevel && (Distance - LocalChunkSize / 2 < LocalChunkSize)) || RecursionLevel < Planet->PlanetData->MinRecursionLevel)
-	{
-		// if (RecursionLevel < 2) 
-		// {
-		// 	UE_LOG(LogTemp, Display, TEXT("LOD Split: Level %d Dist %f ChunkSize %f (Thresh %f)"), RecursionLevel, Distance, LocalChunkSize, LocalChunkSize * 1.5f);
-		// }
-		
-		if (Child1 == nullptr)
-		{
-			Child1 = MakeUnique<FChunkTree>();
-			Child2 = MakeUnique<FChunkTree>();
-			Child3 = MakeUnique<FChunkTree>();
-			Child4 = MakeUnique<FChunkTree>();
-		}
-		
-		if (ChunkMesh != nullptr && ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::READY && ChildChunksReady)
-		{
-			ParentGeneratedChunk = this;
-		}
-		
-		if (ChunkMesh != nullptr && (ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::READY || ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::ABORTED || ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::PENDING_ASSIGN) && ChildChunksReady)
-		{
-			Planet->Chunks.RemoveSwap(ChunkMesh);
-			ChunkMesh->SelfDestruct();
-			ChunkMesh = nullptr;
-		}
-		else if (ChunkMesh != nullptr && ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::GENERATING && ChildChunksReady)
-		{
-			ChunkMesh->BeginSelfDestruct();
-		}
-		
-		// Generate Children
-		Child1->GenerateChunks(RecursionLevel + 1, ChunkRotation, ChunkLocation, LocalChunkSize / 2, Planet, ParentGeneratedChunk);
-
-		FVector NewChunkLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(LocalChunkSize / 2, 0.0f, 0.0f));
-		Child2->GenerateChunks(RecursionLevel + 1, ChunkRotation, NewChunkLocation, LocalChunkSize / 2, Planet, ParentGeneratedChunk);
-
-		NewChunkLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(0.0f, LocalChunkSize / 2, 0.0f));
-		Child3->GenerateChunks(RecursionLevel + 1, ChunkRotation, NewChunkLocation, LocalChunkSize / 2, Planet, ParentGeneratedChunk);
-
-		NewChunkLocation = Planet->PlanetData->PlanetTransformLocation(ChunkLocation, ChunkRotation, FVector(LocalChunkSize / 2, LocalChunkSize / 2, 0.0f));
-		Child4->GenerateChunks(RecursionLevel + 1, ChunkRotation, NewChunkLocation, LocalChunkSize / 2, Planet, ParentGeneratedChunk);
-	}
-	else
-	{
-		if (ChunkMesh == nullptr)
-		{
-			UChunkComponent* Chunk = NewObject<UChunkComponent>(Planet, UChunkComponent::StaticClass(), NAME_None, RF_Transient);
-			Planet->Chunks.Add(Chunk);
-			
-			
-			
-			Chunk->PlanetData = Planet->PlanetData;
-			Chunk->SetSharedResources(&Planet->ChunkSMCPool, &Planet->FoliageISMCPool, &Planet->WaterSMCPool, &Planet->Triangles);
-			Chunk->InitializeChunk(LocalChunkSize, RecursionLevel, Planet->PlanetData->PlanetType, ChunkLocation, ChunkOriginLocation, ChunkRotation, MaxChunkHeight, Planet->MaterialLayersNum, Planet->CloseWaterMesh, Planet->FarWaterMesh);
-			Chunk->SetFoliageActor(Planet->GetFoliageActor());
-			Chunk->bGenerateCollisions = Planet->bGenerateCollisions;
-			Chunk->bGenerateFoliage = Planet->bGenerateFoliage;
-			Chunk->bGenerateRayTracingProxy = Planet->bGenerateRayTracingProxy;
-			Chunk->CollisionDisableDistance = Planet->CollisionDisableDistance;
-			Chunk->FoliageDensityScale = Planet->GlobalFoliageDensityScale;
-			Chunk->GPUBiomeData = Planet->GPUBiomeData;
-
-
-			ChunkMesh = Chunk;
-					
-			Chunk->GenerateChunk();
-		}
-		else if (ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::ABORTED)
-		{
-			Planet->Chunks.RemoveSwap(ChunkMesh);
-			ChunkMesh->SelfDestruct();
-			ChunkMesh = nullptr;
-		}
-		
-		if (ChunkMesh != nullptr && ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::READY)
-		{
-			if (ChildChunks.IsEmpty())
-			{
-				Child1.Reset();
-				Child2.Reset();
-				Child3.Reset();
-				Child4.Reset();
-			}
-			else
-			{
-				for (int i = 0; i < ChildChunks.Num(); i++)
-				{
-					if (ChildChunks[i]->ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::READY || ChildChunks[i]->ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::ABORTED || ChildChunks[i]->ChunkMesh->ChunkStatus == UChunkComponent::EChunkStatus::PENDING_ASSIGN)
-					{
-						Planet->Chunks.RemoveSwap(ChildChunks[i]->ChunkMesh);
-						ChildChunks[i]->ChunkMesh->SelfDestruct();
-						ChildChunks[i]->ChunkMesh = nullptr;
-					}
-					else if (ChildChunks[i]->ChunkMesh->ChunkStatus != UChunkComponent::EChunkStatus::REMOVING)
-					{
-						ChildChunks[i]->ChunkMesh->BeginSelfDestruct();
-					}
-				}
-			}
-		}
-	}
-}
-		
-void FChunkTree::Reset()
-{
-	Child1.Reset();
-	Child2.Reset();
-	Child3.Reset();
-	Child4.Reset();
-}
-
 void APlanetSpawner::DestroyChunkTrees() {
-	Chunks.Empty();
 	ChunkTree1.Reset();
 	ChunkTree2.Reset();
 	ChunkTree3.Reset();
@@ -466,6 +632,7 @@ void APlanetSpawner::DestroyChunkTrees() {
 	ChunkTree5.Reset();
 	ChunkTree6.Reset();
 }
+
 
 void APlanetSpawner::PrecomputeChunkData()
 {
@@ -571,6 +738,40 @@ void APlanetSpawner::PrecomputeChunkData()
 	FoliageActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
 
 }
+
+float APlanetSpawner::GetCurrentFOV() // Returns degrees
+{
+	float FOVDegrees = 90.0f;
+
+#if WITH_EDITOR
+	if (GEditor)
+	{
+		for (FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
+		{
+			if (LevelVC && LevelVC->ViewportType == LVT_Perspective)
+			{
+				FOVDegrees = LevelVC->FOVAngle;
+				break;
+			}
+		}
+	}
+#endif
+
+	// Runtime (PIE, Simulate, Standalone)
+	if (FOVDegrees == 90.0f && GetWorld()) // Avoid overriding good editor value
+	{
+		if (const APlayerController* PC = GetWorld()->GetFirstPlayerController())
+		{
+			if (const APlayerCameraManager* PCM = PC->PlayerCameraManager)
+			{
+				FOVDegrees = PCM->GetFOVAngle();
+			}
+		}
+	}
+
+	return FOVDegrees;
+}
+
 
 
 

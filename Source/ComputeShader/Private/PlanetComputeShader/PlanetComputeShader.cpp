@@ -67,7 +67,7 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Output)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutputVC)
 		SHADER_PARAMETER(uint32, biomeCount)
-		SHADER_PARAMETER(int, chunkQuality)
+		SHADER_PARAMETER(int32, chunkQuality)
 		SHADER_PARAMETER(FVector3f, chunkLocation)
 		SHADER_PARAMETER(FIntVector, chunkRotation)
 		SHADER_PARAMETER(FVector3f, chunkOriginLocation)
@@ -92,25 +92,11 @@ public:
 
 		const FPermutationDomain PermutationVector(Parameters.PermutationId);
 
-		/*
-		* Here you define constants that can be used statically in the shader code.
-		* Example:
-		*/
-		// OutEnvironment.SetDefine(TEXT("MY_CUSTOM_CONST"), TEXT("1"));
-
-		/*
-		* These defines are used in the thread count section of our shader
-		*/
 		OutEnvironment.SetDefine(TEXT("THREADS_X"), 16);
 		OutEnvironment.SetDefine(TEXT("THREADS_Y"), 16);
 		OutEnvironment.SetDefine(TEXT("THREADS_Z"), 1);
 		OutEnvironment.SetDefine(TEXT("PlanetType"), PermutationVector.Get<FPlanetComputeShader::FPlanetComputeShader_Perm_TEST>());
-
-
-		// This shader must support typed UAV load and we are testing if it is supported at runtime using RHIIsTypedUAVLoadSupported
-		//OutEnvironment.CompilerFlags.Add(CFLAG_AllowTypedUAVLoads);
-
-		// FForwardLightingParameters::ModifyCompilationEnvironment(Parameters.Platform, OutEnvironment);
+		
 	}
 private:
 };
@@ -119,11 +105,13 @@ private:
 //                            ShaderType                            ShaderPath                     Shader function name    Type
 IMPLEMENT_GLOBAL_SHADER(FPlanetComputeShader, "/ComputeShaderShaders/Planet.usf", "PlanetComputeShader", SF_Compute);
 
-void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediate& RHICmdList, FPlanetComputeShaderDispatchParams Params, TFunction<void(TArray<float> OutputVal, TArray<uint8> OutputVCVal)> AsyncCallback) {
+FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediate& RHICmdList, FPlanetComputeShaderDispatchParams Params) {
 	typename FPlanetComputeShader::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FPlanetComputeShader::FPlanetComputeShader_Perm_TEST>(Params.PlanetType);
 
 	TShaderMapRef<FPlanetComputeShader> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
+
+	FPlanetComputeShaderReadback Readback;
 
 	if (ComputeShader.IsValid())
 	{
@@ -138,7 +126,7 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 				(Params.BiomeDataTexture && Params.BiomeDataTexture->GetResource()) ? TEXT("Valid") : TEXT("NULL")
 			);
 			UE_LOG(LogTemp, Error, TEXT("Planet Compute Shader: Invalid Resources! Status: %s"), *ResourceStatus);
-			return;
+			return Readback;
 		}
 
 		FRDGBuilder GraphBuilder(RHICmdList);
@@ -171,6 +159,7 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 			
 			int32 NumVertices = Params.X * Params.Y;
 			int32 NumDataPoints = NumVertices * 3;
+			Readback.NumDataPoints = NumDataPoints;
 
 			FRDGBufferRef OutputBuffer = GraphBuilder.CreateBuffer(
 				FRDGBufferDesc::CreateBufferDesc(sizeof(float), NumDataPoints),
@@ -196,49 +185,11 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 			});
 
 			
-			TSharedPtr<FRHIGPUBufferReadback> GPUBufferReadback = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutput"));
-			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadback.Get(), OutputBuffer, 0u);
+			Readback.OutputBuffer = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutput"));
+			AddEnqueueCopyPass(GraphBuilder, Readback.OutputBuffer.Get(), OutputBuffer, 0u);
 			
-			TSharedPtr<FRHIGPUBufferReadback> GPUBufferReadbackVC = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutputVC"));
-			AddEnqueueCopyPass(GraphBuilder, GPUBufferReadbackVC.Get(), OutputBufferVC, 0u);
-
-			auto RunnerFunc = [GPUBufferReadback, GPUBufferReadbackVC, AsyncCallback, NumDataPoints](auto&& RunnerFunc) -> void {
-				if (GPUBufferReadback->IsReady() && GPUBufferReadbackVC->IsReady())
-				{
-					
-					// Read main output
-					float* Buffer = (float*)GPUBufferReadback->Lock(NumDataPoints * sizeof(float));
-					TArray<float> OutVal;
-					OutVal.SetNumUninitialized(NumDataPoints);
-					FMemory::Memcpy(OutVal.GetData(), Buffer, NumDataPoints * sizeof(float));
-					GPUBufferReadback->Unlock();
-
-					// Read vertex colors output
-					uint8* BufferVC = (uint8*)GPUBufferReadbackVC->Lock(NumDataPoints * sizeof(uint8));
-					TArray<uint8> OutValVC;
-					OutValVC.SetNumUninitialized(NumDataPoints);
-					FMemory::Memcpy(OutValVC.GetData(), BufferVC, NumDataPoints * sizeof(uint8));
-					GPUBufferReadbackVC->Unlock();
-
-					AsyncTask(ENamedThreads::GameThread, [AsyncCallback, OutVal, OutValVC]()
-					{
-						AsyncCallback(OutVal, OutValVC);
-					});
-
-					// TSharedPtr handles destruction
-				}
-				else 
-				{
-					AsyncTask(ENamedThreads::ActualRenderingThread, [RunnerFunc]()
-					{
-						RunnerFunc(RunnerFunc);
-					});
-				}
-			};
-
-			AsyncTask(ENamedThreads::ActualRenderingThread, [RunnerFunc]() {
-				RunnerFunc(RunnerFunc);
-			});
+			Readback.OutputVCBuffer = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutputVC"));
+			AddEnqueueCopyPass(GraphBuilder, Readback.OutputVCBuffer.Get(), OutputBufferVC, 0u);
 			
 		}
 		GraphBuilder.Execute();
@@ -249,4 +200,6 @@ void FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediat
 			GEngine->AddOnScreenDebugMessage((uint64)42145125184, 6.f, FColor::Red, FString(TEXT("The compute shader has a problem.")));
 		#endif
 	}
+
+	return Readback;
 }

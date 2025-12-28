@@ -8,6 +8,7 @@
 #include "VoxelNanite.h"
 #include "Engine/StaticMesh.h"
 #include "Rendering/NaniteResources.h"
+#include "Async/Async.h"
 
 #if VOXEL_ENGINE_VERSION >= 507
 #include "Nanite/NaniteFixupChunk.h"
@@ -130,6 +131,9 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& A
 
 		if (AbortAsync == true)
 		{
+			// Cleanup Resources to avoid holding onto data if we abort
+			Resources = Nanite::FResources();
+			RenderData.Reset();
 			return nullptr;
 		}
 	

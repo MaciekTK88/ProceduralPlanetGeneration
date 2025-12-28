@@ -13,37 +13,35 @@
  */
 
 USTRUCT(BlueprintType)
-struct FBiomeDataS
+struct FBiomeData
 {
     GENERATED_BODY()
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Environment")
 	float MinTemperature = 0.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Environment")
 	float MaxTemperature = 1.0f;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Terrain")
 	uint8 TerrainCurveIndex = 0;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Terrain")
 	uint8 MaterialLayerIndex = 0;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "FoliageSetup", meta = (ToolTip = "Foliage data asset"))
-	UFoliageData* FoliageData;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Foliage", meta = (ToolTip = "Foliage data asset"))
+	TObjectPtr<UFoliageData> FoliageData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Forest")
 	bool bGenerateForest = true;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ForestSetup")
-	UFoliageData* ForestFoliageData;
-
-
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Forest")
+	TObjectPtr<UFoliageData> ForestFoliageData;
 };
 
-
-
-
+/**
+ * Data asset containing setup for a procedural planet.
+ */
 UCLASS(BlueprintType)
 class PPG_API UPlanetData : public UDataAsset
 {
@@ -52,123 +50,47 @@ class PPG_API UPlanetData : public UDataAsset
 public:
 
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	TArray<FBiomeDataS> BiomeData;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Biomes")
+	TArray<FBiomeData> BiomeData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	int PlanetType = 0;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|General")
+	int32 PlanetType = 0;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	UTexture2D* CurveAtlas;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Rendering")
+	TObjectPtr<UTexture2D> CurveAtlas;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Dimensions")
 	float NoiseHeight = 400000.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Dimensions")
 	float PlanetRadius = 2500000.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	int MaxRecursionLevel = 10;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|LOD")
+	int32 MaxRecursionLevel = 10;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	int MinRecursionLevel = 0;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|LOD")
+	int32 MinRecursionLevel = 0;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "ChunkSetup")
-	UMaterialInterface* PlanetMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Rendering")
+	TObjectPtr<UMaterialInterface> PlanetMaterial;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
 	bool bGenerateWater = false;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
-	UMaterialInterface* CloseWaterMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
+	TObjectPtr<UMaterialInterface> CloseWaterMaterial;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
-	UMaterialInterface* FarWaterMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
+	TObjectPtr<UMaterialInterface> FarWaterMaterial;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Water")
-	int RecursionLevelForMaterialChange = 3;
-	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
+	int32 RecursionLevelForMaterialChange = 3;
 
+	/** Transforms a local location (e.g. on a cube face) to planet space location. */
+	FVector PlanetTransformLocation(const FVector& TransformPos, const FIntVector& TransformRotDeg, const FVector& LocalLocation) const;
 
-	FVector PlanetTransformLocation(const FVector& TransformPos, const FIntVector TransformRotDeg, const FVector& LocalLocation)
-	{
-		// Round the rotation values to the nearest integer
-		FIntVector Rotation = TransformRotDeg;
-
-		if (Rotation.X == 0 && Rotation.Y == -1 && Rotation.Z == 0)
-		{
-			return FVector(LocalLocation.X, 0.f, LocalLocation.Y) + TransformPos;
-		}
-
-		if (Rotation.X == 0 && Rotation.Y == 1 && Rotation.Z == 0)
-		{
-			return FVector(LocalLocation.X, 0.f, -LocalLocation.Y) + TransformPos;
-		}
-
-		if (Rotation.X == -1 && Rotation.Y == 0 && Rotation.Z == 0)
-		{
-			return FVector(0.f, LocalLocation.Y, LocalLocation.X) + TransformPos;
-		}
-
-		if (Rotation.X == 0 && Rotation.Y == 0 && Rotation.Z == 1)
-		{
-			return FVector(LocalLocation.X, LocalLocation.Y, 0.f) + TransformPos;
-		}
-
-		if (Rotation.X == 0 && Rotation.Y == 0 && Rotation.Z == -1)
-		{
-			return FVector(-LocalLocation.X, LocalLocation.Y, 0.f) + TransformPos;
-		}
-
-		if (Rotation.X == 1 && Rotation.Y == 0 && Rotation.Z == 0)
-		{
-			return FVector(0.f, LocalLocation.Y, -LocalLocation.X) + TransformPos;
-		}
-
-		// Default case: Return the unchanged position if no match is found.
-		return LocalLocation + TransformPos;
-	}
-
-	FVector2f InversePlanetTransformLocation(
-		const FVector& TransformPos,
-		const FIntVector TransformRotDeg,
-		const FVector& PlanetSpaceLocation)
-	{
-		FVector Pos = PlanetSpaceLocation - TransformPos;
-		
-		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == -1 && TransformRotDeg.Z == 0)
-		{
-			return FVector2f(Pos.X, Pos.Z);
-		}
-		
-		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == 1 && TransformRotDeg.Z == 0)
-		{
-			return FVector2f(Pos.X, -Pos.Z);
-		}
-		
-		if (TransformRotDeg.X == -1 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == 0)
-		{
-			return FVector2f(Pos.Z, Pos.Y);
-		}
-		
-		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == 1)
-		{
-			return FVector2f(Pos.X, Pos.Y);
-		}
-		
-		if (TransformRotDeg.X == 0 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == -1)
-		{
-			return FVector2f(-Pos.X, Pos.Y);
-		}
-		
-		if (TransformRotDeg.X == 1 && TransformRotDeg.Y == 0 && TransformRotDeg.Z == 0)
-		{
-			return FVector2f(-Pos.Z, Pos.Y);
-		}
-
-		return FVector2f(0, 0);
-	}
-
+	/** Transforms a planet space location back to a 2D local location. */
+	FVector2f InversePlanetTransformLocation(const FVector& TransformPos, const FIntVector& TransformRotDeg, const FVector& PlanetSpaceLocation) const;
 
 
 private:
