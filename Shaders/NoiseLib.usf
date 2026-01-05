@@ -15,7 +15,7 @@ uint fmix32(uint h) {
     return h;
 }
 
-// A robust 3D hash for ANY float3 (pos/neg/large/small)
+// 3D hash
 float Hash3D(float3 p)
 {
     // reinterpret each float component as a 32‑bit uint
@@ -36,7 +36,6 @@ float Hash3D(float3 p)
 }
 
 //------------------------------------------------------------------------------
-// noised: Optimized noise with derivatives.
 // Returns float3: x = noise value, y = derivative in X, z = derivative in Y.
 float3 noised(float3 x)
 {
@@ -105,14 +104,10 @@ float fbmE(float3 x, int octaves, float ridgePower)
         dX += n.y;
         dY += n.z;
         float dot_d = dX * dX + dY * dY;
-        // Compute the ridge value:
-        // Start with ridgeOffset - abs(n.x), clamp to 0, then raise to the ridgePower.
-        //float currentRidgeOffset = ridgeOffset * (1.0 + (float(i) / float(octaves)) * 0.5); // Example: slightly increase offset for higher octaves
-       // float currentRidgePower = ridgePower * (1.0 - (float(i) / float(octaves)) * 0.5); // Example: slightly decrease power (less sharp) for higher octaves
 
         float ridge = ridgeOffset - abs(n.x);
         //ridge = max(ridge, 0.0);
-        ridge = pow(ridge, ridgePower - 1.0); // Use currentRidgePower
+        ridge = pow(ridge, ridgePower - 1.0);
         ridge *= ridge;
         total += initAmplitude * ridge / (1.0 + derivativeWeight * dot_d);
         initAmplitude *= amplitudeDecay;
@@ -183,7 +178,7 @@ float3 erosion2d(float2 p, float2 dir)
 
 float mountain2d(float2 p, float scale, out float erosion)
 {
-    // 1) base FBM
+    // base FBM
     float3 n = float3(0.0, 0.0, 0.0);
     float freq = 1.0, amp = 0.8;
     
@@ -195,10 +190,10 @@ float mountain2d(float2 p, float scale, out float erosion)
         freq *= 2.0;
     }
     
-    //slope‐direction
+    // slope‐direction
     float2 dir = n.zy * float2(1.0,-1.0);
     
-    //erosion layers
+    // erosion layers
     float3 hsum = float3(0.0, 0.0, 0.0); 
     float  a    = 1.0;// * smoothstep(0.3, 0.5, n.x*0.5 + 0.5);
     float  f    = 1.0;
@@ -210,7 +205,7 @@ float mountain2d(float2 p, float scale, out float erosion)
         a   *= 0.4;
         f   *= 2.0;
     }
-    //smooth out erosion
+    // smooth out erosion
     hsum.x = smoothstep(-1.0, 1.0, hsum.x);
     erosion = hsum.x;
 
@@ -379,9 +374,6 @@ float CratersScaled(float3 p, float scale)
     float3 cellOrigin;
     
     float v = voronoi(p, cellOrigin);
-
-    //if (Hash3D(cellOrigin + float3(10,0,0)) > 0.5)
-    //    return 0.15;
     
     // Base crater depression
     float base = -sin(sqrt(v) * PI * 2.0) * exp(-4.0 * v);
@@ -391,7 +383,7 @@ float CratersScaled(float3 p, float scale)
     float rimWidth  = 0.1 / scale;       // Thicker for large craters
     float rimHeight = 0.25 * (1.0 / scale); // Taller for large craters
 
-    // Gaussian-like rim bump
+    // Rim bump
     float rim = rimHeight * exp(-pow((v - rimPos) / rimWidth, 2.0));
 
     return base + rim;
@@ -399,7 +391,7 @@ float CratersScaled(float3 p, float scale)
 
 float fbmCraters(float3 p)
 {
-    float f = 3.2;  //frequency
+    float f = 3.2;  // frequency
     float r = 0.0;
 
     for (int i = 0; i < 3; ++i)
@@ -444,7 +436,7 @@ float2 Voronoi3D(float3 x, float time)
 }
 
 //------------------------------------------------------------------------------
-//Smooths elevation near water level.
+// Smooths elevation near water level.
 float flattenElevation(float elevation, float waterLevel, float threshold)
 {
     float diff = abs(elevation - waterLevel);

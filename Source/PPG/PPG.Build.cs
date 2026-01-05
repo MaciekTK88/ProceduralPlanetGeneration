@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class PPG : ModuleRules
@@ -17,6 +18,7 @@ public class PPG : ModuleRules
 		
 		PrivateIncludePaths.AddRange(
 			new string[] {
+				Path.Combine(EngineDirectory, "Source/Runtime/Engine/Internal"),
 				// ... add other private include paths required here ...
 			}
 			);

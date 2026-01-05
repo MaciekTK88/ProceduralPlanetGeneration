@@ -75,7 +75,7 @@ struct FFoliageList
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Placement", meta = (ToolTip = "Maximum slope for foliage placement"))
 	int32 MaxSlope = 8;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Placement", meta = (ToolTip = "Use absolute height instead of relative to planet surface"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Placement", meta = (ToolTip = "If true, height is allways equal zero"))
 	bool bUseAbsoluteHeight = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Density", meta = (ToolTip = "If true, density scales with global settings"))

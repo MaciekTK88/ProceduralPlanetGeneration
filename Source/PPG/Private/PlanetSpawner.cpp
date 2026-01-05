@@ -251,6 +251,11 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			ChunkObject->FoliageDensityScale = Planet->GlobalFoliageDensityScale;
 			ChunkObject->GPUBiomeData = Planet->GPUBiomeData;
 		}
+		else if (ChunkObject != nullptr && !ChunkObject->IsValidLowLevel())
+		{
+			// ChunkObject was garbage collected, clear the reference
+			ChunkObject = nullptr;
+		}
 		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION && ChunkObject->GetAbortAsync() == false)
 		{
 			ChunkObject->GenerateChunk();
@@ -266,7 +271,6 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			{
 				// Process pending chunks with rate limiting
 				ChunkObject->AssignComponents();
-				ChunkObject->ChunkStatus = UChunkObject::EChunkStatus::READY;
 				CompletionsThisFrame++;
 			}
 		}
@@ -349,6 +353,19 @@ void FChunkTree::Reset()
 	Child4.Reset();
 }
 
+void FChunkTree::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	if (ChunkObject)
+	{
+		Collector.AddReferencedObject(ChunkObject);
+	}
+
+	if (Child1) Child1->AddReferencedObjects(Collector);
+	if (Child2) Child2->AddReferencedObjects(Collector);
+	if (Child3) Child3->AddReferencedObjects(Collector);
+	if (Child4) Child4->AddReferencedObjects(Collector);
+}
+
 
 /*
  * APlanetSpawner
@@ -393,6 +410,9 @@ void APlanetSpawner::BeginPlay()
 	ChunkTree5.FindConfiguredChunks(ChunksToRemove, false);
 	ChunkTree6.FindConfiguredChunks(ChunksToRemove, false);
 
+
+	bIsLoading = true;
+	
 	for (int32 i = 0; i < ChunksToRemove.Num(); i++)
 	{
 		if (ChunksToRemove[i]->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING)
@@ -415,6 +435,48 @@ void APlanetSpawner::BeginPlay()
 	Super::BeginPlay();
 }
 
+void APlanetSpawner::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	SetActorTickEnabled(false);
+	
+	for (FEditorViewportClient* ViewportClient : GEditor->GetAllViewportClients())
+	{
+		if (ViewportClient->IsLevelEditorClient())
+		{
+			ViewportClient->SetShowStats(true);
+		}
+	}
+	
+	if (SafetyCheck())
+	{
+		ClearComponents();
+		PrecomputeChunkData();
+		SetActorTickEnabled(true);
+	}
+}
+
+void APlanetSpawner::RegeneratePlanet()
+{
+	SetActorTickEnabled(false);
+	if (SafetyCheck())
+	{
+#if WITH_EDITOR
+		if (GEngine)
+		{
+			GEngine->Exec(NULL, TEXT("recompileshaders changed"));
+		}
+#endif
+		ClearComponents();
+		
+		// Ensure all render thread resources (Nanite buffers usually) are fully released before starting new generation.
+		FlushRenderingCommands();
+		
+		PrecomputeChunkData();
+		SetActorTickEnabled(true);
+	}
+}
+
 
 void APlanetSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
@@ -427,26 +489,64 @@ void APlanetSpawner::PostRegisterAllComponents()
 {
 	Super::PostRegisterAllComponents();
 	PreBeginPIEDelegateHandle = FEditorDelegates::PreBeginPIE.AddUObject(this, &APlanetSpawner::OnPreBeginPIE);
+	EndPIEDelegateHandle = FEditorDelegates::EndPIE.AddUObject(this, &APlanetSpawner::OnEndPIE);
+	OnObjectPropertyChangedDelegateHandle = FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(this, &APlanetSpawner::OnObjectPropertyChanged);
 }
 
 void APlanetSpawner::BeginDestroy()
 {
 	FEditorDelegates::PreBeginPIE.Remove(PreBeginPIEDelegateHandle);
+	FEditorDelegates::EndPIE.Remove(EndPIEDelegateHandle);
+	FCoreUObjectDelegates::OnObjectPropertyChanged.Remove(OnObjectPropertyChangedDelegateHandle);
 	Super::BeginDestroy();
 }
 
 void APlanetSpawner::OnPreBeginPIE(const bool bIsSimulating)
 {
-	//bUseEditorTick = false;
 	SetActorTickEnabled(false);
 	UE_LOG(LogTemp, Warning, TEXT("PIE is about to start. Clearing editor-generated chunks."));
 	ClearComponents();
+}
+
+void APlanetSpawner::OnEndPIE(const bool bIsSimulating)
+{
+	SetActorTickEnabled(true);
+	if (SafetyCheck())
+	{
+		PrecomputeChunkData();
+	}
+}
+
+void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event)
+{
+	if (Event.ChangeType != EPropertyChangeType::ValueSet)
+	{
+		return;
+	}
+
+	if (Object == PlanetData)
+	{
+		RegeneratePlanet();
+	}
+	else if (PlanetData && PlanetData->BiomeData.Num() > 0)
+	{
+		// Check if it's one of our foliage data assets
+		for (const FBiomeData& Biome : PlanetData->BiomeData)
+		{
+			if (Object == Biome.FoliageData || Object == Biome.ForestFoliageData)
+			{
+				RegeneratePlanet();
+				return;
+			}
+		}
+	}
 }
 
 #endif
 
 void APlanetSpawner::ClearComponents()
 {
+	FlushRenderingCommands();
 	// Destroy chunks
 	TArray<FChunkTree*> Chunks;
 	ChunkTree1.FindConfiguredChunks(Chunks, true, false);
@@ -522,9 +622,6 @@ void APlanetSpawner::Tick(float DeltaTime)
 	BuildPlanet();
 	FChunkTree::CompletionsThisFrame = 0;
 	
-	// Print WaterSMCPool size
-	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Blue, FString::Printf(TEXT("WaterSMCPool Size: %d"), WaterSMCPool.Num()));
-	
 	// Print all chunks count
 	TArray<FChunkTree*> AllChunks;
 	ChunkTree1.FindConfiguredChunks(AllChunks, true, false);
@@ -534,6 +631,31 @@ void APlanetSpawner::Tick(float DeltaTime)
 	ChunkTree5.FindConfiguredChunks(AllChunks, true, false);
 	ChunkTree6.FindConfiguredChunks(AllChunks, true, false);
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Green, FString::Printf(TEXT("Total Chunks: %d"), AllChunks.Num()));
+
+	if (bIsLoading)
+	{
+		bool bAllReady = true;
+
+		if (AllChunks.Num() == 0)
+		{
+			bAllReady = false;
+		}
+		
+		for (FChunkTree* CheckChunk : AllChunks)
+		{
+			if (CheckChunk->ChunkObject != nullptr && CheckChunk->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::READY)
+			{
+				bAllReady = false;
+				break;
+			}
+		}
+
+		if (bAllReady)
+		{
+			bIsLoading = false;
+			OnPlanetGenerationFinished.Broadcast();
+		}
+	}
 
 	Super::Tick(DeltaTime);
 }
@@ -604,7 +726,6 @@ void APlanetSpawner::BuildPlanet()
 			CharacterLocation = Character->GetActorLocation();
 		}
 #else
-		CharacterLocation = Character->GetActorLocation();
 #endif
 		
 		CharacterLocation = UKismetMathLibrary::InverseTransformLocation(GetActorTransform(), CharacterLocation);
@@ -772,8 +893,19 @@ float APlanetSpawner::GetCurrentFOV() // Returns degrees
 	return FOVDegrees;
 }
 
-
-
+void APlanetSpawner::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+	
+	APlanetSpawner* This = CastChecked<APlanetSpawner>(InThis);
+	
+	This->ChunkTree1.AddReferencedObjects(Collector);
+	This->ChunkTree2.AddReferencedObjects(Collector);
+	This->ChunkTree3.AddReferencedObjects(Collector);
+	This->ChunkTree4.AddReferencedObjects(Collector);
+	This->ChunkTree5.AddReferencedObjects(Collector);
+	This->ChunkTree6.AddReferencedObjects(Collector);
+}
 
 
 

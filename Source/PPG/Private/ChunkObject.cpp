@@ -164,7 +164,8 @@ void UChunkObject::SpawnFoliageComponent(FFoliageRuntimeData& Data)
 
 void UChunkObject::GenerateChunk()
 {
-	if (bAbortAsync)
+	// Early out if object is being destroyed or aborted
+	if (!IsValidLowLevel() || bAbortAsync)
 	{
 		return;
 	}
@@ -228,8 +229,22 @@ void UChunkObject::GenerateChunk()
 	FPlanetComputeShaderReadback Readback;
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](FPlanetComputeShaderReadback Readback)
 	{
-		GPUReadback = Readback;
-		ChunkStatus = EChunkStatus::WAITING_FOR_GPU;
+		// Validate the readback has valid data before proceeding
+		if (Readback.NumDataPoints > 0 && Readback.OutputBuffer.IsValid() && Readback.OutputVCBuffer.IsValid())
+		{
+			GPUReadback = Readback;
+			ChunkStatus = EChunkStatus::WAITING_FOR_GPU;
+		}
+		else
+		{
+			// GPU dispatch failed or returned empty data - abort this chunk
+			UE_LOG(LogTemp, Warning, TEXT("Chunk GPU dispatch returned invalid readback (NumDataPoints: %d, OutputBuffer: %s, OutputVCBuffer: %s). Aborting chunk."),
+				Readback.NumDataPoints,
+				Readback.OutputBuffer.IsValid() ? TEXT("Valid") : TEXT("Invalid"),
+				Readback.OutputVCBuffer.IsValid() ? TEXT("Valid") : TEXT("Invalid"));
+			bAbortAsync = true;
+			GenerationComplete();
+		}
 	});
 }
 
@@ -240,7 +255,7 @@ void UChunkObject::TickGPUReadback()
 		return;
 	}
 
-	if (bAbortAsync && ChunkStatus != EChunkStatus::ABORTED)
+	if (bAbortAsync && ChunkStatus == EChunkStatus::WAITING_FOR_GPU)
 	{
 		// Clear our reference to the readback buffers
 		GPUReadback.OutputBuffer.Reset();
@@ -259,6 +274,21 @@ void UChunkObject::TickGPUReadback()
 			[this, Readback = GPUReadback](FRHICommandListImmediate& RHICmdList)
 			{
 				int32 NumDataPoints = Readback.NumDataPoints;
+				
+				// Safety check: abort if no data to read
+				if (NumDataPoints <= 0)
+				{
+					TWeakObjectPtr<UChunkObject> WeakThis(this);
+					AsyncTask(ENamedThreads::GameThread, [WeakThis]()
+					{
+						if (UChunkObject* StrongThis = WeakThis.Get())
+						{
+							StrongThis->bAbortAsync = true;
+							StrongThis->GenerationComplete();
+						}
+					});
+					return;
+				}
 				
 				// Read main output
 				float* Buffer = (float*)Readback.OutputBuffer->Lock(NumDataPoints * sizeof(float));
@@ -327,6 +357,8 @@ void UChunkObject::ProcessChunkData(const TArray<float>& OutputVal, const TArray
 	if (OutputVal.Num() == 0)
 	{
 		UE_LOG(LogTemp, Error, TEXT("Chunk Process: OutputVal Empty!"));
+		GenerationComplete();
+		return;
 	}
 
 	for (int y = 0; y < VerticesCount; y++)
@@ -482,7 +514,7 @@ void UChunkObject::CompleteChunkGeneration()
 	}
 	
 	// Foliage Processing
-	if (bGenerateFoliage)
+	if (bGenerateFoliage && ForestStrength.Num() > 0 && Vertices.Num() > 0)
 	{
 		for (uint8 BiomeIdx : FoliageBiomeIndices)
 		{
@@ -535,7 +567,17 @@ void UChunkObject::CompleteChunkGeneration()
 							
 							float FoliageSpacing = (10000 / Density);
 							int LocalDensity = FMath::Max(ChunkSize / FoliageSpacing + 2.01, 1);
+							long TotalInstances = (long)LocalDensity * (long)LocalDensity;
 
+							// Protection against hanging the editor on low recursion levels from massive foliage count
+							if (TotalInstances > 250000)
+							{
+#if WITH_EDITOR
+								GEngine->AddOnScreenDebugMessage((uint64)this, 5.f, FColor::Yellow, FString::Printf(TEXT("Foliage generation skipped for chunk (Too many instances: %ld). Increase Recursion Level or Decrease Density."), TotalInstances));
+#endif
+								continue;
+							}
+							
 							for (int y = 0; y < LocalDensity; y++)
 							{
 								for (int z = 0; z < LocalDensity; z++)
@@ -823,8 +865,7 @@ void UChunkObject::AssignComponents()
 {
 	// Early validation: Check if ChunkStaticMesh is ready before doing any work
 	// This can happen if InitResources() hasn't completed yet (it's async)
-	// Also check IsValidLowLevel() to handle case where object was destroyed but pointer not nulled
-	if (!ChunkStaticMesh || !ChunkStaticMesh->IsValidLowLevel() || !ChunkStaticMesh->GetRenderData() || !ChunkStaticMesh->GetRenderData()->IsInitialized())
+	if (!ChunkStaticMesh || !ChunkStaticMesh->GetRenderData() || !ChunkStaticMesh->GetRenderData()->IsInitialized())
 	{
 		// Render data not ready yet, remain in PENDING_ASSIGN to retry next frame
 		return;
@@ -934,6 +975,7 @@ void UChunkObject::AssignComponents()
 	ChunkSMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	ChunkSMC->SetStaticMesh(ChunkStaticMesh);
 	ChunkSMC->RegisterComponent();
+	ChunkStatus = EChunkStatus::READY;
 }
 
 
@@ -1007,59 +1049,64 @@ void UChunkObject::AddWaterChunk()
 void UChunkObject::FreeComponents()
 {
 	//Add components to pools (DISABLED TO PREVENT MOTION BLUR ISSUES)
-	if (ChunkSMC != nullptr)
+	if (ChunkSMC != nullptr && ChunkSMC->IsValidLowLevel())
 	{
 		ChunkSMC->DestroyComponent();
-		ChunkSMC = nullptr;
 	}
+	ChunkSMC = nullptr;
 
 	// Clear static mesh
-	if (ChunkStaticMesh != nullptr)
+	if (ChunkStaticMesh != nullptr && ChunkStaticMesh->IsValidLowLevel() && !ChunkStaticMesh->HasAnyFlags(RF_BeginDestroyed))
 	{
 		FStaticMeshRenderData* LocalRenderData = ChunkStaticMesh->GetRenderData();
+		UStaticMesh* MeshToDestroy = ChunkStaticMesh;
 		
 		ChunkStaticMesh->bSupportRayTracing = false;
 #if WITH_EDITOR
 		ChunkStaticMesh->NaniteSettings.bEnabled = false;
 #endif
 		
-		
 		ChunkStaticMesh->ReleaseResources();
+
+		// Prevent GC regarding this mesh until we are done with it on the render thread
+		MeshToDestroy->AddToRoot();
 		
 		ENQUEUE_RENDER_COMMAND(ReleaseNaniteResources)(
-		[LocalRenderData](FRHICommandListImmediate& RHICmdList)
+		[LocalRenderData, MeshToDestroy](FRHICommandListImmediate& RHICmdList)
 		{
 			if (LocalRenderData)
 			{
 				LocalRenderData->ReleaseResources();
-				LocalRenderData->NaniteResourcesPtr->ReleaseResources();
-				LocalRenderData->NaniteResourcesPtr.Reset();
+				if (LocalRenderData->NaniteResourcesPtr.IsValid())
+				{
+					LocalRenderData->NaniteResourcesPtr->ReleaseResources();
+					LocalRenderData->NaniteResourcesPtr.Reset();
+				}
 			}
 
 			// Defer destruction to game thread AFTER render resources are released
-			/*AsyncTask(ENamedThreads::GameThread, [LocalStaticMesh]()
+			AsyncTask(ENamedThreads::GameThread, [MeshToDestroy]()
 			{
-				LocalStaticMesh->ConditionalBeginDestroy();
-			});*/
+				if (MeshToDestroy && MeshToDestroy->IsValidLowLevel())
+				{
+					MeshToDestroy->RemoveFromRoot();
+					MeshToDestroy->ConditionalBeginDestroy();
+				}
+			});
 		});
 
-		ChunkStaticMesh->ConditionalBeginDestroy();
 		ChunkStaticMesh = nullptr;
 	}
-	
-
-	// Reset ray tracing flag for potential chunk reuse
-	bRayTracing = false;
 
 	// Clean up BiomeMap render target
-	if (BiomeMap != nullptr)
+	if (BiomeMap != nullptr && BiomeMap->IsValidLowLevel())
 	{
 		BiomeMap->ConditionalBeginDestroy();
-		BiomeMap = nullptr;
 	}
+	BiomeMap = nullptr;
 
 
-	if (WaterChunk != nullptr)
+	if (WaterChunk != nullptr && WaterChunk->IsValidLowLevel())
 	{
 		WaterChunk->SetMaterial(0, nullptr);
 		WaterChunk->SetVisibility(false);
@@ -1067,14 +1114,14 @@ void UChunkObject::FreeComponents()
 		{
 			(*WaterSMCPool).Add(WaterChunk);
 		}
-		WaterChunk = nullptr;
 	}
+	WaterChunk = nullptr;
 
 	if (FoliageISMCPool != nullptr)
 	{
 		for (FFoliageRuntimeData& Data : FoliageRuntimeData)
 		{
-			if (Data.Ismc != nullptr)
+			if (Data.Ismc != nullptr && Data.Ismc->IsValidLowLevel())
 			{
 				Data.Ismc->DestroyComponent();
 			}

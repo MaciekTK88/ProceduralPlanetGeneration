@@ -49,7 +49,7 @@ TerrainData GetTerrainData(float3 planetPos, float3 normalizedPlanetPos)
 
     finalElevation = flattenElevation(finalElevation, 0, 0.005);
 
-    terrainData.erosion = erosion;
+    terrainData.erosion = erosion; // Access in material using vertex color red channel
     terrainData.finalElevation = finalElevation;
 
 
@@ -61,7 +61,7 @@ TerrainData GetTerrainData(float3 planetPos, float3 normalizedPlanetPos)
 
         
 #else
-        
+    planetPos *= 0.00000015;
     float finalElevation = ((fbmCraters(planetPos)) * 2 - 1) * 2.0;
     finalElevation = finalElevation * 0.5 + 1.5;
     

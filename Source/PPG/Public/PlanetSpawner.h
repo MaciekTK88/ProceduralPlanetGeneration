@@ -11,6 +11,9 @@
 #include "PlanetSpawner.generated.h"
 
 
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlanetGenerationFinished);
+
 USTRUCT()
 struct FChunkTree
 {
@@ -35,6 +38,8 @@ struct FChunkTree
 
 	// Delete all child chunks by resetting the unique pointers
 	void Reset();
+
+	void AddReferencedObjects(FReferenceCollector& Collector);
 	
 	inline static int32 CompletionsThisFrame = 0;
 };
@@ -48,6 +53,8 @@ class PPG_API APlanetSpawner : public AActor
 	
 public:	
 	APlanetSpawner();
+
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	void BuildPlanet();
@@ -71,13 +78,22 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual bool ShouldTickIfViewportsOnly() const override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Planet|Spawning")
+	void RegeneratePlanet();
+
 
 #if WITH_EDITOR
 	virtual void PostRegisterAllComponents() override;
 	virtual void BeginDestroy() override;
 	void OnPreBeginPIE(const bool bIsSimulating);
+	void OnEndPIE(const bool bIsSimulating);
+	void OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event);
 	
 	FDelegateHandle PreBeginPIEDelegateHandle;
+	FDelegateHandle EndPIEDelegateHandle;
+	FDelegateHandle OnObjectPropertyChangedDelegateHandle;
 #endif
 
 public:
@@ -85,6 +101,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Editor")
 	bool bUseEditorTick = true;
+
+	UPROPERTY(BlueprintAssignable, Category = "Planet|Events")
+	FOnPlanetGenerationFinished OnPlanetGenerationFinished;
 
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	void DestroyChunkTrees();
