@@ -120,7 +120,7 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& A
 			FVector3f TangentX, TangentY;
 			Normal.FindBestAxisVectors(TangentX, TangentY);
 
-			LODResource->VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(i, TangentX, Normal, TangentY);
+			LODResource->VertexBuffers.StaticMeshVertexBuffer.SetVertexTangents(i, TangentX, TangentY, Normal);
 			LODResource->VertexBuffers.ColorVertexBuffer.VertexColor(i) = Mesh.Colors[i];
 
 			for (int32 UVIndex = 0; UVIndex < Mesh.TextureCoordinates.Num(); UVIndex++)
@@ -147,8 +147,7 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& A
 		LODResource->Sections[0].MinVertexIndex = 0;
 		LODResource->Sections[0].MaxVertexIndex = NumVertices - 1;
 		LODResource->Sections[0].MaterialIndex = 0;
-		//LODResource->Sections[0].bEnableCollision = false;
-		//LODResource->Sections[0].bVisibleInRayTracing = true;
+		LODResource->Sections[0].bVisibleInRayTracing = true;
 
 		LODResource->BuffersSize = NumVertices * sizeof(FVector3f);
 

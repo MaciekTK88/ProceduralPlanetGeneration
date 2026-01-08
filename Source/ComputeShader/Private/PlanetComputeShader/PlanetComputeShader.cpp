@@ -115,20 +115,6 @@ FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread
 
 	if (ComputeShader.IsValid())
 	{
-		if (Params.BiomeMap == nullptr || Params.BiomeMap->GetResource() == nullptr || Params.CurveAtlas == nullptr || Params.CurveAtlas->GetResource() == nullptr || Params.BiomeDataTexture == nullptr || Params.BiomeDataTexture->GetResource() == nullptr)
-		{
-			FString ResourceStatus = FString::Printf(TEXT("BiomeMap: %s (Res: %s), CurveAtlas: %s (Res: %s), BiomeData: %s (Res: %s)"), 
-				Params.BiomeMap ? TEXT("Valid") : TEXT("NULL"),
-				(Params.BiomeMap && Params.BiomeMap->GetResource()) ? TEXT("Valid") : TEXT("NULL"),
-				Params.CurveAtlas ? TEXT("Valid") : TEXT("NULL"),
-				(Params.CurveAtlas && Params.CurveAtlas->GetResource()) ? TEXT("Valid") : TEXT("NULL"),
-				Params.BiomeDataTexture ? TEXT("Valid") : TEXT("NULL"),
-				(Params.BiomeDataTexture && Params.BiomeDataTexture->GetResource()) ? TEXT("Valid") : TEXT("NULL")
-			);
-			UE_LOG(LogTemp, Error, TEXT("Planet Compute Shader: Invalid Resources! Status: %s"), *ResourceStatus);
-			return Readback;
-		}
-
 		FRDGBuilder GraphBuilder(RHICmdList);
 		{
 			SCOPE_CYCLE_COUNTER(STAT_PlanetComputeShader_Execute);

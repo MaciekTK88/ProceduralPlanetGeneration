@@ -211,7 +211,7 @@ void UChunkObject::GenerateChunk()
 	Params.NoiseHeight = PlanetData->NoiseHeight;
 	Params.BiomeMap = BiomeMap;
 	Params.CurveAtlas = PlanetData->CurveAtlas;
-	Params.BiomeDataTexture = GPUBiomeData;
+	Params.BiomeDataTexture = PlanetData->GPUBiomeData;
 	Params.BiomeCount = PlanetData->BiomeData.Num();
 	Params.ChunkQuality = ChunkQuality;
 	Params.X = VerticesCount;
@@ -654,12 +654,7 @@ void UChunkObject::CompleteChunkGeneration()
 										continue;
 									}
 
-									if (PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData == FoliageData && FoliageData == FoliageBiome.ForestFoliageData)
-									{
-										continue;
-									}
-
-									if (PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData == FoliageData && FoliageData == FoliageBiome.FoliageData)
+									if (PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData != FoliageData && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData != FoliageData)
 									{
 										continue;
 									}
@@ -896,7 +891,7 @@ void UChunkObject::AssignComponents()
 	
 	TObjectPtr<UMaterialInstanceDynamic> MaterialInst = ChunkSMC->CreateDynamicMaterialInstance(0, PlanetData->PlanetMaterial);
 	MaterialInst->SetTextureParameterValue("BiomeMap", BiomeMap);
-	MaterialInst->SetTextureParameterValue("BiomeData", GPUBiomeData);
+	MaterialInst->SetTextureParameterValue("BiomeData", PlanetData->GPUBiomeData);
 	MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->MaxRecursionLevel - RecursionLevel);
 	MaterialInst->SetScalarParameterValue("PlanetRadius", PlanetData->PlanetRadius);
 	MaterialInst->SetScalarParameterValue("NoiseHeight", PlanetData->NoiseHeight);
@@ -1029,11 +1024,11 @@ void UChunkObject::AddWaterChunk()
 			WaterChunk->SetStaticMesh(CloseWaterMesh);
 		}
 	}
-
+	
 	TObjectPtr<UMaterialInstanceDynamic> WaterMaterialInst;
-	if (RecursionLevel >= PlanetData->RecursionLevelForMaterialChange)
+	if (RecursionLevel >= PlanetData->RecursionLevelForMaterialChange || PlanetData->FarWaterMaterial == nullptr)
 	{
-		WaterMaterialInst = WaterChunk->CreateDynamicMaterialInstance(0, PlanetData->CloseWaterMaterial);
+		WaterMaterialInst = WaterChunk->CreateDynamicMaterialInstance(0, PlanetData->WaterMaterial);
 	}
 	else
 	{
@@ -1173,7 +1168,6 @@ void UChunkObject::SelfDestruct()
 	Biomes.Shrink();
 	FoliageRuntimeData.Empty();
 	FoliageRuntimeData.Shrink();
-	GPUBiomeData = nullptr;
 
 	ConditionalBeginDestroy();
 }

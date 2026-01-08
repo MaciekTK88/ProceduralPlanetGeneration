@@ -72,6 +72,9 @@ public:
 	void ClearComponents();
 	
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
+	void RegeneratePlanet(bool bRecompileShaders);
+	
+	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	float GetCurrentFOV();
 
 protected:
@@ -79,9 +82,9 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual bool ShouldTickIfViewportsOnly() const override;
 	virtual void OnConstruction(const FTransform& Transform) override;
-
+	
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Planet|Spawning")
-	void RegeneratePlanet();
+	void ApplyShaderChanges();
 
 
 #if WITH_EDITOR
@@ -135,9 +138,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Setup")
 	float GlobalFoliageDensityScale = 1.0f;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Planet|Internal")
-	TObjectPtr<UTexture2D> GPUBiomeData;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Water")
 	TObjectPtr<UStaticMesh> FarWaterMesh;
 
@@ -165,6 +165,7 @@ public:
 	
 	FVector CharacterLocation;
 	bool bIsLoading = true;
+	bool bIsRegenerating = false;
 
 private:
 	FChunkTree ChunkTree1, ChunkTree2, ChunkTree3, ChunkTree4, ChunkTree5, ChunkTree6;

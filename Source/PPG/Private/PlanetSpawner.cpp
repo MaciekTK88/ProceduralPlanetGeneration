@@ -249,7 +249,6 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			ChunkObject->bGenerateRayTracingProxy = Planet->bGenerateRayTracingProxy;
 			ChunkObject->CollisionDisableDistance = Planet->CollisionDisableDistance;
 			ChunkObject->FoliageDensityScale = Planet->GlobalFoliageDensityScale;
-			ChunkObject->GPUBiomeData = Planet->GPUBiomeData;
 		}
 		else if (ChunkObject != nullptr && !ChunkObject->IsValidLowLevel())
 		{
@@ -427,7 +426,9 @@ void APlanetSpawner::BeginPlay()
 	}
 	else if (SafetyCheck())
 	{
+		bIsRegenerating = true;
 		PrecomputeChunkData();
+		bIsRegenerating = false;
 		SetActorTickEnabled(true);
 	}
 	
@@ -448,33 +449,34 @@ void APlanetSpawner::OnConstruction(const FTransform& Transform)
 		}
 	}
 	
-	if (SafetyCheck())
-	{
-		ClearComponents();
-		PrecomputeChunkData();
-		SetActorTickEnabled(true);
-	}
+	RegeneratePlanet(false);
 }
 
-void APlanetSpawner::RegeneratePlanet()
+void APlanetSpawner::RegeneratePlanet(bool bRecompileShaders = true)
 {
 	SetActorTickEnabled(false);
-	if (SafetyCheck())
-	{
+
 #if WITH_EDITOR
-		if (GEngine)
+		if (GEngine && bRecompileShaders)
 		{
 			GEngine->Exec(NULL, TEXT("recompileshaders changed"));
 		}
 #endif
-		ClearComponents();
-		
-		// Ensure all render thread resources (Nanite buffers usually) are fully released before starting new generation.
-		FlushRenderingCommands();
-		
+	
+	ClearComponents();
+	
+	if (SafetyCheck())
+	{
+		bIsRegenerating = true;
 		PrecomputeChunkData();
+		bIsRegenerating = false;
 		SetActorTickEnabled(true);
 	}
+}
+
+void APlanetSpawner::ApplyShaderChanges()
+{
+	RegeneratePlanet(true);
 }
 
 
@@ -495,9 +497,13 @@ void APlanetSpawner::PostRegisterAllComponents()
 
 void APlanetSpawner::BeginDestroy()
 {
+	SetActorTickEnabled(false);
 	FEditorDelegates::PreBeginPIE.Remove(PreBeginPIEDelegateHandle);
 	FEditorDelegates::EndPIE.Remove(EndPIEDelegateHandle);
 	FCoreUObjectDelegates::OnObjectPropertyChanged.Remove(OnObjectPropertyChangedDelegateHandle);
+	
+	ClearComponents();
+	
 	Super::BeginDestroy();
 }
 
@@ -513,20 +519,36 @@ void APlanetSpawner::OnEndPIE(const bool bIsSimulating)
 	SetActorTickEnabled(true);
 	if (SafetyCheck())
 	{
+		bIsRegenerating = true;
 		PrecomputeChunkData();
+		bIsRegenerating = false;
 	}
 }
 
 void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event)
 {
-	if (Event.ChangeType != EPropertyChangeType::ValueSet)
+	if (Event.ChangeType == EPropertyChangeType::Interactive)
+	{
+		return;
+	}
+
+	// Prevent infinite recursion if RegeneratePlanet modifies properties
+	if (bIsRegenerating)
+	{
+		return;
+	}
+
+	// Filter out Transient property changes
+	if (Event.Property && Event.Property->HasAnyPropertyFlags(CPF_Transient))
 	{
 		return;
 	}
 
 	if (Object == PlanetData)
 	{
-		RegeneratePlanet();
+		bIsRegenerating = true;
+		RegeneratePlanet(false);
+		bIsRegenerating = false;
 	}
 	else if (PlanetData && PlanetData->BiomeData.Num() > 0)
 	{
@@ -535,7 +557,9 @@ void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEv
 		{
 			if (Object == Biome.FoliageData || Object == Biome.ForestFoliageData)
 			{
-				RegeneratePlanet();
+				bIsRegenerating = true;
+				RegeneratePlanet(false);
+				bIsRegenerating = false;
 				return;
 			}
 		}
@@ -600,8 +624,11 @@ void APlanetSpawner::ClearComponents()
 	
 	for (UStaticMeshComponent* SMC : WaterSMCPool)
 	{
-		SMC->UnregisterComponent();
-		SMC->DestroyComponent();
+		if (SMC->IsValidLowLevel())
+		{
+			SMC->UnregisterComponent();
+			SMC->DestroyComponent();
+		}
 	}
 	WaterSMCPool.Empty();
 	
@@ -662,39 +689,85 @@ void APlanetSpawner::Tick(float DeltaTime)
 
 bool APlanetSpawner::SafetyCheck()
 {
+	GEngine->ClearOnScreenDebugMessages();
+	
+	float DisplayTime = 12.0f;
+	
 	if (PlanetData == nullptr)
 	{
 		//print error on screen
-		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("No Planet Data! Please assign a Planet Data asset.")));
-		UE_LOG(LogTemp, Error, TEXT("Planet Spawner: SafetyCheck Failed - No Planet Data assigned."));
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No Planet Data! Please assign a Planet Data asset.")));
 		return false;
 	}
 	else if (PlanetData->BiomeData.IsEmpty())
 	{
 		//print error on screen
-		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("No Biomes in Planet Data! Please add at least one Biome.")));
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No Biomes in Planet Data! Please add at least one Biome.")));
 		return false;
 	}
-	else if (PlanetData->CurveAtlas == nullptr)
+	else if (PlanetData->PlanetMaterial == nullptr)
 	{
 		//print error on screen
-		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("No Curve Atlas in Planet Data! Please assign a Curve Atlas texture.")));
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No Planet Material assigned in Planet Data! Please assign a Planet Material.")));
+		return false;
+	}
+	else if (PlanetData->bGenerateWater == true && (CloseWaterMesh == nullptr || FarWaterMesh == nullptr))
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("Water generation is enabled but CloseWaterMesh or FarWaterMesh is not assigned! Please assign both meshes.")));
+		return false;
+	}
+	else if (PlanetData->bGenerateWater == true && PlanetData->WaterMaterial == nullptr)
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("Water generation is enabled but WaterMaterial is not assigned in Planet Data! Please assign a Water Material.")));
+		return false;
+	}
+	else if (PlanetData->PlanetRadius <= 0)
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("Planet Radius must be greater than 0! Please set a valid Planet Radius.")));
+		return false;
+	}
+	else if (PlanetData->MinRecursionLevel < 0 || PlanetData->MaxRecursionLevel < 0 || PlanetData->MinRecursionLevel > PlanetData->MaxRecursionLevel)
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("Invalid Recursion Levels! Please ensure MinRecursionLevel >= 0, MaxRecursionLevel >= 0 and MinRecursionLevel <= MaxRecursionLevel.")));
 		return false;
 	}
 	else if (bAsyncInitBody == true && IConsoleManager::Get().FindConsoleVariable(TEXT("p.Chaos.EnableAsyncInitBody"))->GetBool() == false)
 	{
 		//print error on screen
-		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("AsyncInitBody is enabled but Chaos AsyncInitBody is disabled! Please add '[ConsoleVariables] p.Chaos.EnableAsyncInitBody = true' to DefaultEngine.ini or disable AsyncInitBody in Planet Spawner.")));
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("AsyncInitBody is enabled but Chaos AsyncInitBody is disabled! Please add '[ConsoleVariables] p.Chaos.EnableAsyncInitBody = true' to DefaultEngine.ini or disable AsyncInitBody in Planet Spawner.")));
 		return false;
 	}
 	else if (bAsyncInitBody == false && IConsoleManager::Get().FindConsoleVariable(TEXT("p.Chaos.EnableAsyncInitBody"))->GetBool() == true)
 	{
-		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("AsyncInitBody is disabled but Chaos AsyncInitBody is enabled! Please set '[ConsoleVariables] p.Chaos.EnableAsyncInitBody = false' in DefaultEngine.ini or enable AsyncInitBody in Planet Spawner.")));
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("AsyncInitBody is disabled but Chaos AsyncInitBody is enabled! Please set '[ConsoleVariables] p.Chaos.EnableAsyncInitBody = false' in DefaultEngine.ini or enable AsyncInitBody in Planet Spawner.")));
 		return false;
 	}
 	else
 	{
-		return true;
+		// Check if any biome has TerrainCurve assigned (CurveAtlas will be generated in PrecomputeChunkData)
+		bool bHasTerrainCurve = false;
+		for (const FBiomeData& Biome : PlanetData->BiomeData)
+		{
+			if (Biome.TerrainCurve != nullptr)
+			{
+				bHasTerrainCurve = true;
+				break;
+			}
+		}
+		if (!bHasTerrainCurve)
+		{
+			//print error on screen
+			GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No TerrainCurve assigned to any Biome! Please assign TerrainCurve to at least one Biome.")));
+			return false;
+		}
+		else
+		{
+			return true;
+		}
 	}
 	return false;
 }
@@ -757,23 +830,112 @@ void APlanetSpawner::DestroyChunkTrees() {
 
 void APlanetSpawner::PrecomputeChunkData()
 {
-	if (GPUBiomeData != nullptr)
+	if (PlanetData->GPUBiomeData != nullptr)
 	{
-		GPUBiomeData->ConditionalBeginDestroy();
-		GPUBiomeData = nullptr;
+		PlanetData->GPUBiomeData->ConditionalBeginDestroy();
+		PlanetData->GPUBiomeData = nullptr;
 	}
 
+	// Generate CurveAtlas from biome TerrainCurve assets
+	if (PlanetData->CurveAtlas != nullptr)
+	{
+		PlanetData->CurveAtlas->ConditionalBeginDestroy();
+		PlanetData->CurveAtlas = nullptr;
+	}
+	
+	FlushRenderingCommands();
+	
 
 	if (PlanetData->BiomeData.Num() > 0)
 	{
+		// Calculate TerrainCurveIndex for each biome based on unique curves
+		TArray<UCurveLinearColor*> UniqueCurves;
+		for (int32 i = 0; i < PlanetData->BiomeData.Num(); i++)
+		{
+			FBiomeData& Biome = PlanetData->BiomeData[i];
+			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: Biome[%d] TerrainCurve = %s"), 
+				i, Biome.TerrainCurve ? *Biome.TerrainCurve->GetName() : TEXT("NULL"));
+			
+			if (Biome.TerrainCurve != nullptr)
+			{
+				int32 CurveIndex = UniqueCurves.Find(Biome.TerrainCurve);
+				if (CurveIndex == INDEX_NONE)
+				{
+					CurveIndex = UniqueCurves.Add(Biome.TerrainCurve);
+				}
+				Biome.TerrainCurveIndex = static_cast<uint8>(CurveIndex);
+			}
+			else
+			{
+				Biome.TerrainCurveIndex = 0;
+			}
+		}
+
+		// Generate CurveAtlas texture
+		if (UniqueCurves.Num() > 0)
+		{
+			int32 AtlasWidth = PlanetData->CurveAtlasWidth;
+			int32 AtlasHeight = UniqueCurves.Num();
+
+			PlanetData->CurveAtlas = UTexture2D::CreateTransient(AtlasWidth, AtlasHeight, PF_FloatRGBA);
+			PlanetData->CurveAtlas->MipGenSettings = TMGS_NoMipmaps;
+			PlanetData->CurveAtlas->SRGB = false;
+			PlanetData->CurveAtlas->Filter = TF_Nearest;
+			PlanetData->CurveAtlas->AddressX = TA_Clamp;
+			PlanetData->CurveAtlas->AddressY = TA_Clamp;
+
+			FTexture2DMipMap& CurveMipMap = PlanetData->CurveAtlas->GetPlatformData()->Mips[0];
+			
+			// Calculate the required size for float16 RGBA (8 bytes per pixel - 4 channels x 2 bytes each)
+			int32 DataSize = AtlasWidth * AtlasHeight * 4 * sizeof(FFloat16);
+			
+			FByteBulkData& CurveImageData = CurveMipMap.BulkData;
+			CurveImageData.Lock(LOCK_READ_WRITE);
+			FFloat16* RawCurveData = (FFloat16*)CurveImageData.Realloc(DataSize);
+
+			for (int32 CurveIdx = 0; CurveIdx < UniqueCurves.Num(); CurveIdx++)
+			{
+				UCurveLinearColor* Curve = UniqueCurves[CurveIdx];
+				
+				// Skip if curve became invalid during the process
+				if (!IsValid(Curve))
+				{
+					continue;
+				}
+				
+				for (int32 x = 0; x < AtlasWidth; x++)
+				{
+					float Time = static_cast<float>(x) / static_cast<float>(AtlasWidth - 1);
+					FLinearColor Color = Curve->GetLinearColorValue(Time);
+					
+					int32 PixelIndex = (CurveIdx * AtlasWidth + x) * 4;
+					RawCurveData[PixelIndex + 0] = FFloat16(Color.R);
+					RawCurveData[PixelIndex + 1] = FFloat16(Color.G);
+					RawCurveData[PixelIndex + 2] = FFloat16(Color.B);
+					RawCurveData[PixelIndex + 3] = FFloat16(Color.A);
+				}
+			}
+
+			CurveImageData.Unlock();
+			PlanetData->CurveAtlas->UpdateResource();
+
+			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: Generated CurveAtlas %dx%d from %d unique curves (float16 format, %d bytes)"),
+				AtlasWidth, AtlasHeight, UniqueCurves.Num(), DataSize);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: No TerrainCurve assets assigned to biomes!"));
+		}
+
 		uint8 ParameterCount = 5;
 
-		GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, PlanetData->BiomeData.Num(), PF_R16F);
-		GPUBiomeData->MipGenSettings = TMGS_NoMipmaps;
-		GPUBiomeData->SRGB = false;
-		GPUBiomeData->Filter = TF_Nearest;
+		PlanetData->GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, PlanetData->BiomeData.Num(), PF_R16F);
 
-		FTexture2DMipMap& MipMap = GPUBiomeData->GetPlatformData()->Mips[0];
+		PlanetData->GPUBiomeData->MipGenSettings = TMGS_NoMipmaps;
+		PlanetData->GPUBiomeData->SRGB = false;
+		PlanetData->GPUBiomeData->Filter = TF_Nearest;
+
+		FTexture2DMipMap& MipMap = PlanetData->GPUBiomeData->GetPlatformData()->Mips[0];
 		FByteBulkData& ImageData = MipMap.BulkData;
 		FFloat16* RawImageData = (FFloat16*)ImageData.Lock(LOCK_READ_WRITE);
 
@@ -794,15 +956,15 @@ void APlanetSpawner::PrecomputeChunkData()
 		ImageData.Unlock();
 
 		// Free CPU bulk after upload
-		GPUBiomeData->UpdateResource();
+		PlanetData->GPUBiomeData->UpdateResource();
 		MipMap.BulkData.RemoveBulkData();
 
 		MaterialLayersNum = UniqueLayers.Num();
 		
 		UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: Created Texture %dx%d. Valid: %s Resource: %s"), 
 			ParameterCount, PlanetData->BiomeData.Num(), 
-			GPUBiomeData ? TEXT("Yes") : TEXT("No"),
-			(GPUBiomeData && GPUBiomeData->GetResource()) ? TEXT("Yes") : TEXT("No")
+			PlanetData->GPUBiomeData ? TEXT("Yes") : TEXT("No"),
+			(PlanetData->GPUBiomeData && PlanetData->GPUBiomeData->GetResource()) ? TEXT("Yes") : TEXT("No")
 		);
 	}
 	else
@@ -857,6 +1019,8 @@ void APlanetSpawner::PrecomputeChunkData()
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	FoliageActor = GetWorld()->SpawnActor<AFoliageSpawner>(AFoliageSpawner::StaticClass(), GetActorLocation(), FRotator(0.0f, 0.0f, 0.0f), SpawnParams);
 	FoliageActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
+	
+	FlushRenderingCommands();
 
 }
 

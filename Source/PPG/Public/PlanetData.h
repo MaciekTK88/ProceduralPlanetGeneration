@@ -6,6 +6,7 @@
 
 #include "Engine/DataAsset.h"
 #include "FoliageData.h"
+#include "Curves/CurveLinearColor.h"
 #include "PlanetData.generated.h"
 
 /**
@@ -24,6 +25,10 @@ struct FBiomeData
 	float MaxTemperature = 1.0f;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Terrain")
+	TObjectPtr<UCurveLinearColor> TerrainCurve;
+
+	// Hidden - computed from TerrainCurve at runtime
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Biome|Terrain")
 	uint8 TerrainCurveIndex = 0;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Terrain")
@@ -56,8 +61,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|General")
 	int32 PlanetType = 0;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Rendering")
-	TObjectPtr<UTexture2D> CurveAtlas;
+
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Dimensions")
 	float NoiseHeight = 400000.0f;
@@ -66,7 +70,7 @@ public:
 	float PlanetRadius = 2500000.0f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|LOD")
-	int32 MaxRecursionLevel = 10;
+	int32 MaxRecursionLevel = 5;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|LOD")
 	int32 MinRecursionLevel = 0;
@@ -78,13 +82,22 @@ public:
 	bool bGenerateWater = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
-	TObjectPtr<UMaterialInterface> CloseWaterMaterial;
+	TObjectPtr<UMaterialInterface> WaterMaterial;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
 	TObjectPtr<UMaterialInterface> FarWaterMaterial;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
 	int32 RecursionLevelForMaterialChange = 3;
+	
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Planet|Internal")
+	TObjectPtr<UTexture2D> GPUBiomeData;
+
+	UPROPERTY(EditAnywhere, Category = "Planet|Internal")
+	int32 CurveAtlasWidth = 256;
+
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Planet|Internal")
+	TObjectPtr<UTexture2D> CurveAtlas;
 
 	/** Transforms a local location (e.g. on a cube face) to planet space location. */
 	FVector PlanetTransformLocation(const FVector& TransformPos, const FIntVector& TransformRotDeg, const FVector& LocalLocation) const;

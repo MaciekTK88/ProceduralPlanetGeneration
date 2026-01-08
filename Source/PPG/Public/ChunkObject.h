@@ -60,9 +60,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chunk|Setup")
 	TObjectPtr<UPlanetData> PlanetData;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "Chunk|Render")
-	TObjectPtr<UTexture2D> GPUBiomeData;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chunk|Setup")
 	bool bGenerateCollisions = true;
