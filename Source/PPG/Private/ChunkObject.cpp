@@ -764,7 +764,7 @@ void UChunkObject::UploadChunk()
 		TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
 
 		FPlanetNaniteBuilder NaniteBuilder;
-		NaniteBuilder.PositionPrecision = -(PlanetData->MaxRecursionLevel - RecursionLevel) + 3;
+		NaniteBuilder.PositionPrecision = -(FMath::Log2(ChunkSize / ChunkQuality / 32) - 1);
 		NaniteBuilder.Mesh.Indices = Indices;
 		NaniteBuilder.Mesh.Positions = Positions;
 		NaniteBuilder.bCompressVertices = true;

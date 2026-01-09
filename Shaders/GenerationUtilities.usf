@@ -361,7 +361,7 @@ void WritePlanetData(
     BiomeMap[DispatchThreadID.xy + int2(0, verticesAmount)] = float4(terrainData.top3BiomeStrengths, 1.0);
 
     uint index = (DispatchThreadID.y * verticesAmount + DispatchThreadID.x) * 3;
-    float3 planetPos = normalizedPlanetPos * (planetRadius + terrainData.finalElevation * noiseHeight);
+    float3 planetPos = normalizedPlanetPos * (planetRadius + clamp(terrainData.finalElevation, -1.0, 1.0) * noiseHeight);
     planetPos = planetPos - (chunkOriginLocation - chunkLocation);
     float3 chunkLocalPos = planetPos - chunkLocation;
     Output[index]     = chunkLocalPos.x;
