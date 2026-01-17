@@ -586,147 +586,177 @@ void UChunkObject::CompleteChunkGeneration()
 									float xlocalpos = y * FoliageSpacing;
 									float ylocalpos = z * FoliageSpacing;
 
-									FVector PlanetSpaceFoliageLocation;
-									PlanetSpaceFoliageLocation.X = QuantizeDouble(PlanetSpaceLocation.X, FoliageSpacing);
-									PlanetSpaceFoliageLocation.Y = QuantizeDouble(PlanetSpaceLocation.Y, FoliageSpacing);
-									PlanetSpaceFoliageLocation.Z = QuantizeDouble(PlanetSpaceLocation.Z, FoliageSpacing);
+									// Calculate the initial foliage position without quantization
+									FVector PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
 
-									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceFoliageLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
-
-
-
+									// Quantize the actual foliage position to create a chunk-independent global grid
+									PlanetSpaceFoliageLocation.X = QuantizeDouble(PlanetSpaceFoliageLocation.X, FoliageSpacing);
+									PlanetSpaceFoliageLocation.Y = QuantizeDouble(PlanetSpaceFoliageLocation.Y, FoliageSpacing);
+									PlanetSpaceFoliageLocation.Z = QuantizeDouble(PlanetSpaceFoliageLocation.Z, FoliageSpacing);
+									
 									FVector2f localpos = PlanetData->InversePlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, PlanetSpaceFoliageLocation);
-									if (localpos.X > ChunkSize || localpos.Y > ChunkSize || localpos.X <= 0 || localpos.Y <= 0)
-									{
-										continue;
-									}
-
 									xlocalpos = localpos.X;
 									ylocalpos = localpos.Y;
+									
+								// Generate a random stream based on the quantized position for consistent randomness
+								FRandomStream ScaleStream(GetTypeHash(PlanetSpaceFoliageLocation));
 
-									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
+								FVector2d NewLocalPos = HashFVectorToVector2D(PlanetSpaceFoliageLocation, -FoliageSpacing / 2, FoliageSpacing / 2, FoliageSpacing / 4.0f);
+									
+									// Base position for the cluster center (or single instance)
+									float BaseXLocalPos = xlocalpos + NewLocalPos.X;
+									float BaseYLocalPos = ylocalpos + NewLocalPos.Y;
+									
+								// Check if new position is within the current chunk bounds
+								if (BaseXLocalPos > ChunkSize || BaseYLocalPos > ChunkSize || BaseXLocalPos < 0 || BaseYLocalPos < 0)
+								{
+									continue;
+								}
+									
+								// Sample vertex data from the cluster center position for biome/forest/slope checks
+								// This ensures cluster spawning decisions are consistent across chunks
+								int centerVertexX = FMath::RoundToInt(FMath::Clamp(BaseXLocalPos / ChunkSize, 0, 1) * float(ChunkQuality));
+								int centerVertexY = FMath::RoundToInt(FMath::Clamp(BaseYLocalPos / ChunkSize, 0, 1) * float(ChunkQuality));
+								int centerVertexIndex = centerVertexX + centerVertexY * VerticesCount;
+								centerVertexIndex = FMath::Clamp(centerVertexIndex, 0, Vertices.Num() - 1);
 
-									//uint32 SeedValue = FCrc::MemCrc32(&NormalizedfoliageLocation, sizeof(FVector));
-									FRandomStream ScaleStream(GetTypeHash(PlanetSpaceFoliageLocation));
+								// Get vertex random for density check
+								float VertexRandom = abs(NewLocalPos.X / (FoliageSpacing / 2) * 255.0f);
 
-									FVector2d NewLocalPos = HashFVectorToVector2D(PlanetSpaceFoliageLocation, -FoliageSpacing / 2, FoliageSpacing / 2, 10.0f);
-									xlocalpos = (NewLocalPos.X + xlocalpos);
-									ylocalpos = (NewLocalPos.Y + ylocalpos);
+								// Forest strength average from surrounding vertices
+								float Forest = ForestStrength[centerVertexIndex];
+								int32 Count = 1;
 
-									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(xlocalpos, ylocalpos, 0.0f));
+								if (centerVertexX + 1 < VerticesCount)
+								{
+									Forest += ForestStrength[centerVertexIndex + 1];
+									Count++;
+								}
+								if (centerVertexY + 1 < VerticesCount)
+								{
+									Forest += ForestStrength[centerVertexIndex + VerticesCount];
+									Count++;
+								}
+								if (centerVertexX + 1 < VerticesCount && centerVertexY + 1 < VerticesCount)
+								{
+									Forest += ForestStrength[centerVertexIndex + 1 + VerticesCount];
+									Count++;
+								}
 
-									int vertexX = FMath::RoundToInt(FMath::Clamp(xlocalpos / ChunkSize,0,1) * float(ChunkQuality));
-									int vertexY = FMath::RoundToInt(FMath::Clamp(ylocalpos / ChunkSize,0,1) * float(ChunkQuality));
+								Forest /= Count;
+
+								// Check forest density conditions
+								if (Forest >= VertexRandom && FoliageData == FoliageBiome.FoliageData)
+								{
+									continue;
+								}
+
+								if (Forest < VertexRandom && FoliageData == FoliageBiome.ForestFoliageData)
+								{
+									continue;
+								}
+
+								// Check biome compatibility
+								if (PlanetData->BiomeData[Biomes[centerVertexIndex]].FoliageData != FoliageData && PlanetData->BiomeData[Biomes[centerVertexIndex]].ForestFoliageData != FoliageData)
+								{
+									continue;
+								}
+
+								// Check slope constraint at cluster center
+								if (Slopes[centerVertexIndex] > Foliage.MaxSlope || Slopes[centerVertexIndex] < Foliage.MinSlope)
+								{
+									continue;
+								}
+
+								int32 NumToSpawn = 1;
+								if (Foliage.bEnableClustering)
+								{
+									NumToSpawn = ScaleStream.RandRange(Foliage.ClusterSizeMin, Foliage.ClusterSizeMax);
+								}
+
+								for (int32 InstanceIdx = 0; InstanceIdx < NumToSpawn; InstanceIdx++)
+								{
+									float CurrentXLocalPos = BaseXLocalPos;
+									float CurrentYLocalPos = BaseYLocalPos;
+
+									// If this is a cluster instance (and not the first one), apply random offset
+									if (InstanceIdx > 0)
+									{
+										float Angle = ScaleStream.FRand() * 2.0f * PI;
+										float Radius = ScaleStream.FRand() * Foliage.ClusterRadius;
+										CurrentXLocalPos += FMath::Cos(Angle) * Radius;
+										CurrentYLocalPos += FMath::Sin(Angle) * Radius;
+									}
+
+									// Sample height for THIS specific instance position
+									int vertexX = FMath::RoundToInt(FMath::Clamp(CurrentXLocalPos / ChunkSize, 0, 1) * float(ChunkQuality));
+									int vertexY = FMath::RoundToInt(FMath::Clamp(CurrentYLocalPos / ChunkSize, 0, 1) * float(ChunkQuality));
 									int vertexIndex = vertexX + vertexY * VerticesCount;
 									vertexIndex = FMath::Clamp(vertexIndex, 0, Vertices.Num() - 1);
 
-									float VertexRandom = abs(NewLocalPos.X / (FoliageSpacing / 2) * 255.0f);
-
-									//Forest strength average from surrounding vertices
-									float Forest = ForestStrength[vertexIndex];
-									int32 Count = 1;
-
-									if (vertexX + 1 < VerticesCount)
-									{
-										Forest += ForestStrength[vertexIndex + 1];
-										Count++;
-									}
-									if (vertexY + 1 < VerticesCount)
-									{
-										Forest += ForestStrength[vertexIndex + VerticesCount];
-										Count++;
-									}
-									if (vertexX + 1 < VerticesCount && vertexY + 1 < VerticesCount)
-									{
-										Forest += ForestStrength[vertexIndex + 1 + VerticesCount];
-										Count++;
-									}
-
-									Forest /= Count;
-
-									if (Forest >= VertexRandom && FoliageData == FoliageBiome.FoliageData)
-									{
-										continue;
-									}
-
-									if (Forest < VertexRandom && FoliageData == FoliageBiome.ForestFoliageData)
-									{
-										continue;
-									}
-
-									if (PlanetData->BiomeData[Biomes[vertexIndex]].FoliageData != FoliageData && PlanetData->BiomeData[Biomes[vertexIndex]].ForestFoliageData != FoliageData)
-									{
-										continue;
-									}
-
-									//transform planetSpaceVertex to -1, 1 range
-									float OriginalChunkSize = PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
-									PlanetSpaceFoliageLocation = PlanetSpaceFoliageLocation / (OriginalChunkSize / 2.0f);
-
-									//apply deformation
-									float deformation = 0.75;
-									PlanetSpaceFoliageLocation.X = tan(PlanetSpaceFoliageLocation.X * PI * deformation / 4.0);
-									PlanetSpaceFoliageLocation.Y = tan(PlanetSpaceFoliageLocation.Y * PI * deformation / 4.0);
-									PlanetSpaceFoliageLocation.Z = tan(PlanetSpaceFoliageLocation.Z * PI * deformation / 4.0);
-
-									PlanetSpaceFoliageLocation.Normalize();
-
 									double Height = VertexHeight[vertexIndex];
-
+									
 									if (Foliage.bUseAbsoluteHeight == true)
 									{
 										Height = 0;
 									}
 
-
-
-									PlanetSpaceFoliageLocation *= (PlanetData->PlanetRadius + Height - Foliage.DepthOffset);
-									PlanetSpaceFoliageLocation = PlanetSpaceFoliageLocation - (ChunkOriginLocation - PlanetSpaceLocation);
-
-
-
+									// Check height constraint for this instance
 									if (Height > Foliage.MaxHeight || Height < Foliage.MinHeight)
 									{
 										continue;
 									}
 
-									if (Slopes[vertexIndex] > Foliage.MaxSlope || Slopes[vertexIndex] < Foliage.MinSlope)
-									{
-										continue;
-									}
+									// Recalculate PlanetSpaceLocation for this instance
+									PlanetSpaceFoliageLocation = PlanetData->PlanetTransformLocation(PlanetSpaceLocation, PlanetSpaceRotation, FVector(CurrentXLocalPos, CurrentYLocalPos, 0.0f));
 
+										//transform planetSpaceVertex to -1, 1 range
+										float OriginalChunkSize = PlanetData->PlanetRadius * 2.0 / sqrt(2.0);
+										FVector NormalizedFoliageLocation = PlanetSpaceFoliageLocation / (OriginalChunkSize / 2.0f);
 
+										//apply deformation
+										float deformation = 0.75;
+										NormalizedFoliageLocation.X = tan(NormalizedFoliageLocation.X * PI * deformation / 4.0);
+										NormalizedFoliageLocation.Y = tan(NormalizedFoliageLocation.Y * PI * deformation / 4.0);
+										NormalizedFoliageLocation.Z = tan(NormalizedFoliageLocation.Z * PI * deformation / 4.0);
 
+										NormalizedFoliageLocation.Normalize();
+										
+										// Restore PlanetSpaceFoliageLocation from normalized vector
+										PlanetSpaceFoliageLocation = NormalizedFoliageLocation;
 
-									FRotator Rot = FRotator(0, 0, 0);
+										// Use the height from the cluster center (already retrieved above)
+										PlanetSpaceFoliageLocation *= (PlanetData->PlanetRadius + Height - Foliage.DepthOffset);
+										PlanetSpaceFoliageLocation = PlanetSpaceFoliageLocation - (ChunkOriginLocation - PlanetSpaceLocation);
 
-									if (Foliage.bAlignToTerrain == false)
-									{
-										Rot = UKismetMathLibrary::FindLookAtRotation(FVector(0,0, 0), PlanetSpaceFoliageLocation);
-										Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
-									}
-									else if (Vertices.IsValidIndex(vertexIndex) && Normals.IsValidIndex(vertexIndex))
-									{
-										FVector v1 = FVector(Vertices[vertexIndex]);
+										FRotator Rot = FRotator(0, 0, 0);
 
-										FVector v2 = FVector(Vertices[vertexIndex]) + FVector(Normals[vertexIndex]);
+										if (Foliage.bAlignToTerrain == false)
+										{
+											Rot = UKismetMathLibrary::FindLookAtRotation(FVector(0, 0, 0), PlanetSpaceFoliageLocation);
+											Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
+										}
+										else if (Vertices.IsValidIndex(vertexIndex) && Normals.IsValidIndex(vertexIndex))
+										{
+											FVector3f v1 = Vertices[vertexIndex];
+											FVector3f v2 = Vertices[vertexIndex] + Normals[vertexIndex];
 
-										Rot = UKismetMathLibrary::FindLookAtRotation(v1, v2);
-										Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
-									}
+											Rot = UKismetMathLibrary::FindLookAtRotation(FVector(v1), FVector(v2));
+											Rot = FRotator(Rot.Pitch - 90, Rot.Yaw, Rot.Roll);
+										}
 
-									FTransform transform = FTransform(Rot, PlanetSpaceFoliageLocation - PlanetSpaceLocation, FVector(1, 1, 1));
-									Rot = FRotator(0, ScaleStream.FRandRange(0, 360), 0);
-									Rot = UKismetMathLibrary::TransformRotation(transform, Rot);
+										FTransform transform = FTransform(Rot, PlanetSpaceFoliageLocation - PlanetSpaceLocation, FVector(1, 1, 1));
+										Rot = FRotator(0, ScaleStream.FRandRange(0, 360), 0);
+										Rot = UKismetMathLibrary::TransformRotation(transform, Rot);
 
-									transform = FTransform(Rot,PlanetSpaceFoliageLocation - PlanetSpaceLocation,FVector(
+										transform = FTransform(Rot, PlanetSpaceFoliageLocation - PlanetSpaceLocation, FVector(
 											ScaleStream.FRandRange(Foliage.MinScale, Foliage.MaxScale),
 											ScaleStream.FRandRange(Foliage.MinScale, Foliage.MaxScale),
 											ScaleStream.FRandRange(Foliage.MinScale, Foliage.MaxScale))
-											);
+										);
 
-									RuntimeData.LocalFoliageTransforms.Add(transform);
-
+										RuntimeData.LocalFoliageTransforms.Add(transform);
+									}
 								}
 							}
 							RuntimeData.Foliage = Foliage;
@@ -748,111 +778,110 @@ void UChunkObject::CompleteChunkGeneration()
 
 void UChunkObject::UploadChunk()
 {
-	if (bNaniteLandscape)
+
+	//convert vertices to Positions
+	TConstVoxelArrayView<FVector3f> Positions(Vertices.GetData(), Vertices.Num());
+
+	TConstVoxelArrayView<FVector2f> TextureCoordinatesV(UVs.GetData(), UVs.Num());
+
+	TVoxelArray<TConstVoxelArrayView<FVector2f>> TextureCoordinatesVV;
+	TextureCoordinatesVV.Add(TextureCoordinatesV);
+	
+	TArray<int32> IntTriangles = TArray<int32>((*Triangles));
+
+	TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
+
+	FPlanetNaniteBuilder NaniteBuilder;
+	NaniteBuilder.PositionPrecision = -(FMath::Log2(ChunkSize / ChunkQuality / 32) - 1);
+	NaniteBuilder.Mesh.Indices = Indices;
+	NaniteBuilder.Mesh.Positions = Positions;
+	NaniteBuilder.bCompressVertices = true;
+	NaniteBuilder.Mesh.Normals = Octahedrons;
+	NaniteBuilder.Mesh.Colors = VertexColors;
+	NaniteBuilder.Mesh.TextureCoordinates = TextureCoordinatesVV;
+
+
+	Chaos::FTriangleMeshImplicitObjectPtr ChaosMeshData;
+	if (bCollisions)
 	{
-
-		//convert vertices to Positions
-		TConstVoxelArrayView<FVector3f> Positions(Vertices.GetData(), Vertices.Num());
-
-		TConstVoxelArrayView<FVector2f> TextureCoordinatesV(UVs.GetData(), UVs.Num());
-
-		TVoxelArray<TConstVoxelArrayView<FVector2f>> TextureCoordinatesVV;
-		TextureCoordinatesVV.Add(TextureCoordinatesV);
-		
-		TArray<int32> IntTriangles = TArray<int32>((*Triangles));
-
-		TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
-
-		FPlanetNaniteBuilder NaniteBuilder;
-		NaniteBuilder.PositionPrecision = -(FMath::Log2(ChunkSize / ChunkQuality / 32) - 1);
-		NaniteBuilder.Mesh.Indices = Indices;
-		NaniteBuilder.Mesh.Positions = Positions;
-		NaniteBuilder.bCompressVertices = true;
-		NaniteBuilder.Mesh.Normals = Octahedrons;
-		NaniteBuilder.Mesh.Colors = VertexColors;
-		NaniteBuilder.Mesh.TextureCoordinates = TextureCoordinatesVV;
-
-
-		Chaos::FTriangleMeshImplicitObjectPtr ChaosMeshData;
-		if (bCollisions)
-		{
-			TConstVoxelArrayView<uint16> FaceMaterials;
-			ChaosMeshData = Chaos::FTriangleMeshImplicitObjectPtr (FVoxelChaosTriangleMeshCooker::Create(TArray<int32>(*Triangles), Positions, FaceMaterials));
-		}
-		
-		if (bAbortAsync == true)
-		{
-			GenerationComplete();
-			return;
-		}
-
-		// Generate the render data
-		TUniquePtr<FStaticMeshRenderData> RenderData = NaniteBuilder.CreateRenderData(bAbortAsync, bRayTracing);
-		
-		if (bAbortAsync == true)
-		{
-			GenerationComplete();
-			return;
-		}
-		
-		// Use TWeakObjectPtr to safely handle potential GC during async execution
-		TWeakObjectPtr<UChunkObject> WeakThis(this);
-		bool bLocalRayTracing = bRayTracing;
-		bool bLocalCollisions = bCollisions;
-		
-		AsyncTask(ENamedThreads::GameThread, [WeakThis, ChaosMeshData, bLocalRayTracing, bLocalCollisions, RenderData = MoveTemp(RenderData)]() mutable
-		{
-			UChunkObject* StrongThis = WeakThis.Get();
-			if (!StrongThis)
-			{
-				// Object was garbage collected, clean up render data
-				RenderData.Reset();
-				return;
-			}
-			
-			if (StrongThis->bAbortAsync == true)
-			{
-				StrongThis->GenerationComplete();
-				return;
-			}
-
-			StrongThis->ChunkStaticMesh = NewObject<UStaticMesh>(StrongThis, NAME_None, RF_Transient);
-			StrongThis->ChunkStaticMesh->bDoFastBuild = true;
-			StrongThis->ChunkStaticMesh->bGenerateMeshDistanceField = false;
-			StrongThis->ChunkStaticMesh->SetStaticMaterials({ FStaticMaterial() });
-			StrongThis->ChunkStaticMesh->bSupportRayTracing = bLocalRayTracing;
-
-
-			if (bLocalCollisions)
-			{
-				StrongThis->ChunkStaticMesh->CreateBodySetup();
-
-				UBodySetup* BodySetup = StrongThis->ChunkStaticMesh->GetBodySetup();
-				BodySetup->bGenerateMirroredCollision = false;
-				BodySetup->bDoubleSidedGeometry = false;
-				BodySetup->bSupportUVsAndFaceRemap = false;
-				BodySetup->CollisionTraceFlag = CTF_UseComplexAsSimple;
-
-				BodySetup->TriMeshGeometries = { ChaosMeshData };
-
-				BodySetup->bHasCookedCollisionData = true;
-				BodySetup->bCreatedPhysicsMeshes = true;
-			}
-
-			StrongThis->ChunkStaticMesh->SetRenderData(MoveTemp(RenderData));
-
-			#if WITH_EDITOR
-			StrongThis->ChunkStaticMesh->NaniteSettings.bEnabled = true;
-			#endif
-
-			StrongThis->ChunkStaticMesh->CalculateExtendedBounds();
-			StrongThis->ChunkStaticMesh->InitResources();
-
-
-			StrongThis->GenerationComplete();
-
-		});
+		TConstVoxelArrayView<uint16> FaceMaterials;
+		ChaosMeshData = Chaos::FTriangleMeshImplicitObjectPtr (FVoxelChaosTriangleMeshCooker::Create(TArray<int32>(*Triangles), Positions, FaceMaterials));
 	}
+	
+	if (bAbortAsync == true)
+	{
+		GenerationComplete();
+		return;
+	}
+
+	// Generate the render data
+	TUniquePtr<FStaticMeshRenderData> RenderData = NaniteBuilder.CreateRenderData(bAbortAsync, bRayTracing, bNaniteLandscape);
+	
+	if (bAbortAsync == true)
+	{
+		GenerationComplete();
+		return;
+	}
+	
+	// Use TWeakObjectPtr to safely handle potential GC during async execution
+	TWeakObjectPtr<UChunkObject> WeakThis(this);
+	bool bLocalRayTracing = bRayTracing;
+	bool bLocalCollisions = bCollisions;
+	bool bLocalNaniteLandscape = bNaniteLandscape;
+	
+	AsyncTask(ENamedThreads::GameThread, [WeakThis, ChaosMeshData, bLocalRayTracing, bLocalCollisions, bLocalNaniteLandscape, RenderData = MoveTemp(RenderData)]() mutable
+	{
+		UChunkObject* StrongThis = WeakThis.Get();
+		if (!StrongThis)
+		{
+			// Object was garbage collected, clean up render data
+			RenderData.Reset();
+			return;
+		}
+		
+		if (StrongThis->bAbortAsync == true)
+		{
+			StrongThis->GenerationComplete();
+			return;
+		}
+
+		StrongThis->ChunkStaticMesh = NewObject<UStaticMesh>(StrongThis, NAME_None, RF_Transient);
+		StrongThis->ChunkStaticMesh->bDoFastBuild = true;
+		StrongThis->ChunkStaticMesh->bGenerateMeshDistanceField = false;
+		StrongThis->ChunkStaticMesh->SetStaticMaterials({ FStaticMaterial() });
+		StrongThis->ChunkStaticMesh->bSupportRayTracing = bLocalRayTracing;
+
+
+		if (bLocalCollisions)
+		{
+			StrongThis->ChunkStaticMesh->CreateBodySetup();
+
+			UBodySetup* BodySetup = StrongThis->ChunkStaticMesh->GetBodySetup();
+			BodySetup->bGenerateMirroredCollision = false;
+			BodySetup->bDoubleSidedGeometry = false;
+			BodySetup->bSupportUVsAndFaceRemap = false;
+			BodySetup->CollisionTraceFlag = CTF_UseComplexAsSimple;
+
+			BodySetup->TriMeshGeometries = { ChaosMeshData };
+
+			BodySetup->bHasCookedCollisionData = true;
+			BodySetup->bCreatedPhysicsMeshes = true;
+		}
+
+		StrongThis->ChunkStaticMesh->SetRenderData(MoveTemp(RenderData));
+
+		#if WITH_EDITOR
+		StrongThis->ChunkStaticMesh->NaniteSettings.bEnabled = bLocalNaniteLandscape;
+		#endif
+
+		StrongThis->ChunkStaticMesh->CalculateExtendedBounds();
+		StrongThis->ChunkStaticMesh->InitResources();
+
+
+		StrongThis->GenerationComplete();
+
+	});
+	
 
 }
 
@@ -968,6 +997,7 @@ void UChunkObject::AssignComponents()
 	}
 	
 	ChunkSMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	ChunkSMC->SetCollisionResponseToChannels(CollisionSetup);
 	ChunkSMC->SetStaticMesh(ChunkStaticMesh);
 	ChunkSMC->RegisterComponent();
 	ChunkStatus = EChunkStatus::READY;

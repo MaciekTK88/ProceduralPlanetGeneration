@@ -134,6 +134,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Setup")
 	bool bAsyncInitBody = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Setup")
+	bool bNaniteLandscape = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Setup")
 	float GlobalFoliageDensityScale = 1.0f;
@@ -162,6 +165,9 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, Category = "Planet|Pools")
 	TArray<TObjectPtr<UStaticMeshComponent>> WaterSMCPool;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
+	FCollisionResponseContainer CollisionSetup;
 	
 	FVector CharacterLocation;
 	bool bIsLoading = true;

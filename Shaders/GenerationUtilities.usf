@@ -224,7 +224,7 @@ bool InTempRange(float t, float mn, float mx)
         return t >= mn && t <  mx;
 }
 
-float3 sampleBlendedCurve(
+float3 sampleBiomes(
     float3 pos,
     float x,
     float y,
@@ -241,7 +241,7 @@ float3 sampleBlendedCurve(
     float temperature = evaluateTemperature(pos, temperatureNoiseScale);
 
     float weights[MAX_BIOMES_STATIC]; 
-    float totalWeight = 0.0;  // This will be original sum (unused after sharpening)
+    float totalWeight = 0.0;
 
     uint actualLoopCount = min(biomeCount, MAX_BIOMES_STATIC);
 
@@ -271,12 +271,12 @@ float3 sampleBlendedCurve(
         
     }
 
-    // NEW: Apply sharpening to weights (moved here so top-3 uses sharpened values)
+    //Apply sharpening to weights (moved here so top-3 uses sharpened values)
     float sharpness = 4.0; // Tune this value (e.g., 4.0-10.0) for desired transition sharpness
     float sharpenedTotal = 0.0;
     for (uint i = 0; i < actualLoopCount; ++i)
     {
-        weights[i] = pow(max(weights[i], 0.0), sharpness); // Sharpen: raise to power
+        weights[i] = pow(max(weights[i], 0.0), sharpness);
         sharpenedTotal += weights[i];
     }
 
@@ -331,7 +331,7 @@ float3 sampleBlendedCurve(
     {
         if (weights[i] > 0.0)
         {
-            float normW = weights[i] / sharpenedTotal; // Use sharpened total for normalization
+            float normW = weights[i] / sharpenedTotal;
             
             float rawCurveIndex = ReadBiomeDataTexture(i, 2) + 0.1;
             uint curveIndex = uint(clamp(rawCurveIndex, 0.0, 255.0));

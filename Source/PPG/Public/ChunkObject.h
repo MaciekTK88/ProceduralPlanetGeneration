@@ -73,8 +73,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chunk|Setup")
 	bool bGenerateFoliage = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chunk|Setup")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chunk|Setup")
 	float FoliageDensityScale = 1.0f;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Chunk|Setup")
+	FCollisionResponseContainer CollisionSetup;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chunk|Status")
 	bool bIsReady = false;

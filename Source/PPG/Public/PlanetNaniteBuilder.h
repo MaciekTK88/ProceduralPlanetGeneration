@@ -37,7 +37,7 @@ public:
 
 	// OutClusteredIndices will be filled only when compressing vertices;
 	// In other case, original indices array does represent clustered indices
-	TUniquePtr<FStaticMeshRenderData> CreateRenderData(bool& AbortAsync, bool RayTracingProxy);
+	TUniquePtr<FStaticMeshRenderData> CreateRenderData(bool& AbortAsync, bool RayTracingProxy, bool NaniteEnabled);
 	UStaticMesh* CreateStaticMesh();
 
 public:

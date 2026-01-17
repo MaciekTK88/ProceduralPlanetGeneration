@@ -92,6 +92,18 @@ struct FFoliageList
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|LOD")
 	TArray<FFoliageLOD> LODs;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Clustering", meta = (ToolTip = "WIP - Enable clustering of foliage instances"))
+	bool bEnableClustering = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Clustering", meta = (EditCondition = "bEnableClustering"))
+	int32 ClusterSizeMin = 1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Clustering", meta = (EditCondition = "bEnableClustering"))
+	int32 ClusterSizeMax = 1;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Foliage|Clustering", meta = (EditCondition = "bEnableClustering"))
+	float ClusterRadius = 100.0f;
 };
 
 

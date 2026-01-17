@@ -14,7 +14,7 @@
 #include "Nanite/NaniteFixupChunk.h"
 #endif
 
-TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& AbortAsync, bool RayTracingProxy)
+TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& AbortAsync, bool RayTracingProxy, bool NaniteEnabled)
 {
 	VOXEL_FUNCTION_COUNTER();
 	check(Mesh.Positions.Num() == Mesh.Normals.Num());
@@ -28,68 +28,75 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& A
 	using namespace Voxel::Nanite;
 
 	Bounds = FVoxelBox::FromPositions(Mesh.Positions);
-	
 
-	TVoxelArray<TUniquePtr<FCluster>> AllClusters = CreateClusters();
-
-	if (AbortAsync == true)
+	if (NaniteEnabled)
 	{
-		return nullptr;
-	}
 
-	FEncodingSettings EncodingSettings;
-	EncodingSettings.PositionPrecision = PositionPrecision;
-	checkStatic(FEncodingSettings::NormalBits == NormalBits);
+		TVoxelArray<TUniquePtr<FCluster>> AllClusters = CreateClusters();
 
-	TVoxelArray<TVoxelArray<TUniquePtr<FCluster>>> Pages = CreatePages(AllClusters, EncodingSettings);
+		if (AbortAsync == true)
+		{
+			return nullptr;
+		}
 
-	if (AbortAsync == true)
-	{
-		return nullptr;
-	}
+		FEncodingSettings EncodingSettings;
+		EncodingSettings.PositionPrecision = PositionPrecision;
+		checkStatic(FEncodingSettings::NormalBits == NormalBits);
 
-	TVoxelChunkedArray<uint8> RootData;
+		TVoxelArray<TVoxelArray<TUniquePtr<FCluster>>> Pages = CreatePages(AllClusters, EncodingSettings);
 
-	FBuildData BuildData{
-		Resources,
-		EncodingSettings,
-		Pages,
-		RootData,
-		AllClusters.Num(),
-		Bounds,
-		FMath::FloorLog2(Mesh.Positions.Num()) + 1
-	};
-	if (!Build(BuildData))
-	{
-		return nullptr;
-	}
+		if (AbortAsync == true)
+		{
+			return nullptr;
+		}
 
-	Resources.RootData = RootData.Array();
-	Resources.PositionPrecision = PositionPrecision;
-	Resources.NormalPrecision = NormalBits;
-	Resources.NumInputTriangles = Mesh.Indices.Num() / 3;
-	Resources.NumInputVertices = Mesh.Positions.Num();
+		TVoxelChunkedArray<uint8> RootData;
+
+		FBuildData BuildData{
+			Resources,
+			EncodingSettings,
+			Pages,
+			RootData,
+			AllClusters.Num(),
+			Bounds,
+			FMath::FloorLog2(Mesh.Positions.Num()) + 1
+		};
+		if (!Build(BuildData))
+		{
+			return nullptr;
+		}
+
+		Resources.RootData = RootData.Array();
+		Resources.PositionPrecision = PositionPrecision;
+		Resources.NormalPrecision = NormalBits;
+		Resources.NumInputTriangles = Mesh.Indices.Num() / 3;
+		Resources.NumInputVertices = Mesh.Positions.Num();
 #if VOXEL_ENGINE_VERSION < 506
-	Resources.NumInputMeshes = 1;
-	Resources.NumInputTexCoords = Mesh.TextureCoordinates.Num();
+		Resources.NumInputMeshes = 1;
+		Resources.NumInputTexCoords = Mesh.TextureCoordinates.Num();
 #endif
-	Resources.NumClusters = AllClusters.Num();
-	Resources.NumRootPages = Pages.Num();
-	Resources.HierarchyRootOffsets.Add(0);
+		Resources.NumClusters = AllClusters.Num();
+		Resources.NumRootPages = Pages.Num();
+		Resources.HierarchyRootOffsets.Add(0);
 #if VOXEL_ENGINE_VERSION >= 507
-	Resources.MeshBounds = Bounds.ToFBox3f();
+		Resources.MeshBounds = Bounds.ToFBox3f();
 #endif
+				
+	}
 
 	TUniquePtr<FStaticMeshRenderData> RenderData = MakeUnique<FStaticMeshRenderData>();
 	RenderData->Bounds = Bounds.ToFBox();
 	RenderData->NumInlinedLODs = 1;
-	RenderData->NaniteResourcesPtr = MakePimpl<Nanite::FResources>(MoveTemp(Resources));
+	if (NaniteEnabled)
+	{
+		RenderData->NaniteResourcesPtr = MakePimpl<Nanite::FResources>(MoveTemp(Resources));
+	}
 
 	FStaticMeshLODResources* LODResource = new FStaticMeshLODResources();
 	LODResource->bBuffersInlined = true;
 	LODResource->Sections.Emplace();
 
-	if (RayTracingProxy == false)
+	if (RayTracingProxy == false && NaniteEnabled == true)
 	{
 		
 		// Ensure UStaticMesh::HasValidRenderData returns true
@@ -150,21 +157,26 @@ TUniquePtr<FStaticMeshRenderData> FPlanetNaniteBuilder::CreateRenderData(bool& A
 		LODResource->Sections[0].bVisibleInRayTracing = true;
 
 		LODResource->BuffersSize = NumVertices * sizeof(FVector3f);
+		
+		LODResource->bHasColorVertexData = true;
 
 		RenderData->LODResources.Add(LODResource);
 
 		RenderData->LODVertexFactories.Add(FStaticMeshVertexFactories(GMaxRHIFeatureLevel));
-
-		RenderData->InitializeRayTracingRepresentationFromRenderingLODs();
+		
+		if (RayTracingProxy)
+		{
+			RenderData->InitializeRayTracingRepresentationFromRenderingLODs();
 		
 
-		TPimplPtr<FCardRepresentationData> MeshCards = MakePimpl<FCardRepresentationData>();
-		FMeshCardsBuildData& CardData = MeshCards->MeshCardsBuildData;
+			TPimplPtr<FCardRepresentationData> MeshCards = MakePimpl<FCardRepresentationData>();
+			FMeshCardsBuildData& CardData = MeshCards->MeshCardsBuildData;
 
-		CardData.Bounds = RenderData->Bounds.GetBox();
-		MeshCardRepresentation::SetCardsFromBounds(CardData);
-		RenderData->LODResources[0].CardRepresentationData = new FCardRepresentationData();
-		RenderData->LODResources[0].CardRepresentationData->MeshCardsBuildData = CardData;
+			CardData.Bounds = RenderData->Bounds.GetBox();
+			MeshCardRepresentation::SetCardsFromBounds(CardData);
+			RenderData->LODResources[0].CardRepresentationData = new FCardRepresentationData();
+			RenderData->LODResources[0].CardRepresentationData->MeshCardsBuildData = CardData;
+		}
 
 	}
 

@@ -247,8 +247,10 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			ChunkObject->bGenerateCollisions = Planet->bGenerateCollisions;
 			ChunkObject->bGenerateFoliage = Planet->bGenerateFoliage;
 			ChunkObject->bGenerateRayTracingProxy = Planet->bGenerateRayTracingProxy;
+			ChunkObject->bNaniteLandscape = Planet->bNaniteLandscape;
 			ChunkObject->CollisionDisableDistance = Planet->CollisionDisableDistance;
 			ChunkObject->FoliageDensityScale = Planet->GlobalFoliageDensityScale;
+			ChunkObject->CollisionSetup = Planet->CollisionSetup;
 		}
 		else if (ChunkObject != nullptr && !ChunkObject->IsValidLowLevel())
 		{

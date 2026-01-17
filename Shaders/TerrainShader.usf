@@ -38,8 +38,8 @@ TerrainData GetTerrainData(float3 planetPos, float3 normalizedPlanetPos)
 
 
     
-    //use this function to sample the biome blended curves that you set up in the curve atlas texture. Modify only 6 first parameters.
-    float3 curveHeight = sampleBlendedCurve(normalizedPlanetPos, HillNoise, tectonicEffect, erosion, 2,5, terrainData.biomeIndex, terrainData.top3BiomeIndices, terrainData.top3BiomeStrengths);
+    //use this function to sample the biome terrain curves that you set up in planet data asset. Modify only 6 first parameters.
+    float3 curveHeight = sampleBiomes(normalizedPlanetPos, HillNoise, tectonicEffect, erosion, 2,5, terrainData.biomeIndex, terrainData.top3BiomeIndices, terrainData.top3BiomeStrengths);
     HillNoise = curveHeight.x;
     tectonicEffect = curveHeight.y;
     erosion = curveHeight.z;
