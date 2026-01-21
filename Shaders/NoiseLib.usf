@@ -36,85 +36,151 @@ float Hash3D(float3 p)
 }
 
 //------------------------------------------------------------------------------
-// Returns float3: x = noise value, y = derivative in X, z = derivative in Y.
-float3 noised(float3 x)
+//------------------------------------------------------------------------------
+// 3D Gradient Noise with Analytic Derivatives
+float3 grad(float3 p) {
+    // 3D hash to get a random gradient vector
+    uint ux = asuint(p.x);
+    uint uy = asuint(p.y);
+    uint uz = asuint(p.z);
+    uint h = ux * 0x9e3779b1u ^ uy * 0x85ebca6bu ^ uz * 0xc2b2ae35u;
+    h = fmix32(h);
+    
+    // Convert to float in [-1, 1]
+    float x_hash = float(h & 0x000F) / 7.5 - 1.0; 
+    float y_hash = float((h >> 4) & 0x000F) / 7.5 - 1.0;
+    float z_hash = float((h >> 8) & 0x000F) / 7.5 - 1.0;
+    
+    // Normalize to get a point on sphere (or close enough for noise)
+    // Or simpler: map to edges of cube / 12 edges for standard Perlin
+    // Let's use a simpler hash for gradients typically used in prod code (IQ style)
+    
+    // Using the existing Hash3D to get 3 floats might be slow. 
+    // Let's us a quick pseudo-random direction.
+    
+    float3 r = float3(
+        Hash3D(p),
+        Hash3D(p + float3(12.34, 45.67, 78.90)),
+        Hash3D(p + float3(55.11, 11.22, 99.88))
+    );
+    return normalize(r * 2.0 - 1.0);
+}
+
+// Improved hash for gradients (from IQ / widely used)
+float3 hash_grad(float3 p) {
+	p = float3( dot(p,float3(127.1,311.7, 74.7)),
+			    dot(p,float3(269.5,183.3,246.1)),
+			    dot(p,float3(113.5,271.9,124.6)));
+
+	return -1.0 + 2.0 * frac(sin(p) * 43758.5453123);
+}
+
+// Gradient Noise 3D with derivatives
+// Returns float4( value, dd.x, dd.y, dd.z )
+float4 noised(float3 x)
 {
     float3 p = floor(x);
     float3 w = frac(x);
     
-    float wx = w.x, wy = w.y, wz = w.z;
-    float wx2 = wx * wx, wy2 = wy * wy, wz2 = wz * wz;
-    float wx3 = wx2 * wx, wy3 = wy2 * wy, wz3 = wz2 * wz;
+    // Quintic interpolation
+    float3 u = w * w * w * (w * (w * 6.0 - 15.0) + 10.0);
+    float3 du = 30.0 * w * w * (w - 1.0) * (w - 1.0);
     
-    float uX = wx3 * (6.0 * wx2 - 15.0 * wx + 10.0);
-    float uY = wy3 * (6.0 * wy2 - 15.0 * wy + 10.0);
-    float uZ = wz3 * (6.0 * wz2 - 15.0 * wz + 10.0);
+    // Gradients at corners
+    float3 ga = hash_grad( p + float3(0,0,0) );
+    float3 gb = hash_grad( p + float3(1,0,0) );
+    float3 gc = hash_grad( p + float3(0,1,0) );
+    float3 gd = hash_grad( p + float3(1,1,0) );
+    float3 ge = hash_grad( p + float3(0,0,1) );
+    float3 gf = hash_grad( p + float3(1,0,1) );
+    float3 gg = hash_grad( p + float3(0,1,1) );
+    float3 gh = hash_grad( p + float3(1,1,1) );
     
-    float duX = 30.0 * wx2 * (wx - 1.0) * (wx - 1.0);
-    float duY = 30.0 * wy2 * (wy - 1.0) * (wy - 1.0);
-    
-    float A = Hash3D(p + float3(0, 0, 0));
-    float B = Hash3D(p + float3(1, 0, 0));
-    float C = Hash3D(p + float3(0, 1, 0));
-    float D = Hash3D(p + float3(1, 1, 0));
-    float E = Hash3D(p + float3(0, 0, 1));
-    float F = Hash3D(p + float3(1, 0, 1));
-    float G = Hash3D(p + float3(0, 1, 1));
-    float H = Hash3D(p + float3(1, 1, 1));
-    
-    float k0 = A;
-    float k1 = B - A;
-    float k2 = C - A;
-    float k3 = E - A;
-    float k4 = A - B - C + D;
-    float k5 = A - C - E + G;
-    float k6 = A - B - E + F;
-    float k7 = -A + B + C - D + E - F - G + H;
-    
-    float noiseValue = -1.0 + 2.0 * (
-        k0 + k1 * uX + k2 * uY + k3 * uZ +
-        k4 * uX * uY + k5 * uY * uZ +
-        k6 * uZ * uX + k7 * uX * uY * uZ
-    );
-    
-    float noiseDerivX = 2.0 * duX * (k1 + k4 * uY + k6 * uZ + k7 * uY * uZ);
-    float noiseDerivY = 2.0 * duY * (k2 + k5 * uZ + k4 * uX + k7 * uZ * uX);
-    
-    return float3(noiseValue, noiseDerivX, noiseDerivY);
+    // Projections
+    float va = dot( ga, w - float3(0,0,0) );
+    float vb = dot( gb, w - float3(1,0,0) );
+    float vc = dot( gc, w - float3(0,1,0) );
+    float vd = dot( gd, w - float3(1,1,0) );
+    float ve = dot( ge, w - float3(0,0,1) );
+    float vf = dot( gf, w - float3(1,0,1) );
+    float vg = dot( gg, w - float3(0,1,1) );
+    float vh = dot( gh, w - float3(1,1,1) );
+	
+    // Interpolation
+    float k0 = va;
+    float k1 = vb - va;
+    float k2 = vc - va;
+    float k3 = ve - va;
+    float k4 = va - vb - vc + vd;
+    float k5 = va - vc - ve + vg;
+    float k6 = va - vb - ve + vf;
+    float k7 = -va + vb + vc - vd + ve - vf - vg + vh;
+
+    float value = k0 + k1*u.x + k2*u.y + k3*u.z + k4*u.x*u.y + k5*u.y*u.z + k6*u.z*u.x + k7*u.x*u.y*u.z;
+
+    // Derivatives
+    float3 d = du * (float3(k1,k2,k3) + u.yzx*float3(k4,k5,k6) + u.zxy*float3(k6,k4,k5) + u.yzx*u.zxy*k7 ) +
+               ga + u.x*(gb-ga) + u.y*(gc-ga) + u.z*(ge-ga) + 
+               u.x*u.y*(ga-gb-gc+gd) + u.y*u.z*(ga-gc-ge+gg) + u.z*u.x*(ga-gb-ge+gf) + 
+               u.x*u.y*u.z*(-ga+gb+gc-gd+ge-gf-gg+gh);
+               
+    return float4(value, d);
 }
 
 //------------------------------------------------------------------------------
 // fbmE: Fractal Brownian Motion with derivatives.
+// Now using Gradient Noise and Domain Rotation to fix grid artifacts.
+//------------------------------------------------------------------------------
+// fbmE: Fractal Brownian Motion with derivatives.
+// Now using Gradient Noise and Domain Rotation to fix grid artifacts.
 float fbmE(float3 x, int octaves, float ridgePower)
 {
     float initAmplitude = 0.7;
     float amplitudeDecay = 0.55;
     float frequencyMultiplier = 2.0;
-    float derivativeWeight = 1.0;
+    float derivativeWeight = 1.0; 
     float ridgeOffset = 1.0;
-    float ridgeGain = 4.0;
     
     float total = 0.0;
-    float dX = 0.0, dY = 0.0;
+    float3 dSum = float3(0.0, 0.0, 0.0);
     float3 pos = x;
     
+    // Domain Rotation Matrix (non-aligned)
+    const float3x3 rot = float3x3( 
+        -0.37, -0.39,  0.84,
+         0.20,  0.81,  0.54,
+        -0.90,  0.36, -0.22 
+    );
+    
+    float3x3 accumRot = float3x3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+
     for (int i = 0; i < octaves; ++i)
     {
-        float3 n = noised(pos);
-        dX += n.y;
-        dY += n.z;
-        float dot_d = dX * dX + dY * dY;
+        float4 n = noised(pos);
+        float noiseVal = n.x;
+        float3 noiseDeriv = n.yzw;
+        
+        // Accumulate derivatives for ridge/erosion effect
+        // Rotate derivative back to world alignment
+        dSum += mul(noiseDeriv, accumRot);
 
-        float ridge = ridgeOffset - abs(n.x);
-        //ridge = max(ridge, 0.0);
-        ridge = pow(ridge, ridgePower - 1.0);
-        ridge *= ridge;
+        // Ridge noise calculation
+        float ridge = ridgeOffset - abs(noiseVal);
+        ridge = pow(max(ridge, 0.0), ridgePower - 1.0);
+        ridge *= ridge; 
+        
+        float dot_d = dot(dSum, dSum);
+        
         total += initAmplitude * ridge / (1.0 + derivativeWeight * dot_d);
+        
         initAmplitude *= amplitudeDecay;
-        pos *= frequencyMultiplier;
+        pos = mul(rot, pos) * frequencyMultiplier; // Rotate and Scale
+        accumRot = mul(rot, accumRot);
     }
+
     return total;
 }
+
 
 
 //------------------------------------------------------------------------------

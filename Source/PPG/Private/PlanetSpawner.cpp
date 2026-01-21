@@ -22,7 +22,7 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 	if (ChunkObject != nullptr)
 	{
 		TArray<FChunkTree*> ChildChunks;
-		FindConfiguredChunks(ChildChunks, false);
+		FindConfiguredChunks(ChildChunks, false, true);
 		
 		if (ChildChunks.IsEmpty())
 		{
@@ -39,11 +39,6 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 				}
 			}
 		}
-	}
-	
-	if (ChunkObject && ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU)
-	{
-		ChunkObject->TickGPUReadback();
 	}
 	
 	FVector ChunkLocalOrigin = FVector(LocalChunkSize / 2, LocalChunkSize / 2, 0.0f);
@@ -192,6 +187,7 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			// Ready to destroy immediately
 			if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED || 
 				ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN || 
+				ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU ||
 				ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
 			{
 				ChunkObject->SelfDestruct();
@@ -204,18 +200,9 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 				ChunkObject = nullptr;
 			}
 			// Active work needs to be aborted
-			else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::GENERATING || 
-					 ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU ||
-					 ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::REMOVING)
+			else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::GENERATING)
 			{
-				// 1. Ensure GPU readback continues ticking so it can detect the abort flag
-				ChunkObject->TickGPUReadback();
-
-				// 2. Trigger abort if not already triggered
-				if (ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING && !ChunkObject->GetAbortAsync())
-				{
-					ChunkObject->BeginSelfDestruct(false);
-				}
+				ChunkObject->BeginSelfDestruct();
 			}
 		}
 		
@@ -252,12 +239,7 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			ChunkObject->FoliageDensityScale = Planet->GlobalFoliageDensityScale;
 			ChunkObject->CollisionSetup = Planet->CollisionSetup;
 		}
-		else if (ChunkObject != nullptr && !ChunkObject->IsValidLowLevel())
-		{
-			// ChunkObject was garbage collected, clear the reference
-			ChunkObject = nullptr;
-		}
-		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION && ChunkObject->GetAbortAsync() == false)
+		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
 		{
 			ChunkObject->GenerateChunk();
 		}
@@ -274,6 +256,10 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 				ChunkObject->AssignComponents();
 				CompletionsThisFrame++;
 			}
+		}
+		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU)
+		{
+			ChunkObject->TickGPUReadback();
 		}
 		
 		if (ChunkObject != nullptr)
@@ -292,7 +278,7 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 			{
 				for (int32 i = 0; i < ChildChunks.Num(); i++)
 				{
-					if (ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
+					if (ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_ASSIGN || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU || ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
 					{
 						ChildChunks[i]->ChunkObject->SelfDestruct();
 						ChildChunks[i]->ChunkObject = nullptr;
@@ -302,23 +288,9 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 						ChildChunks[i]->ChunkObject->SelfDestruct();
 						ChildChunks[i]->ChunkObject = nullptr;
 					}
-					else if (ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::GENERATING || 
-					ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::WAITING_FOR_GPU ||
-					ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::REMOVING)
+					else if (ChildChunks[i]->ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::GENERATING)
 					{
-						ChildChunks[i]->ChunkObject->TickGPUReadback();
-						
-						if (ChildChunks[i]->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING && !ChildChunks[i]->ChunkObject->GetAbortAsync())
-						{
-							if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::READY)
-							{
-								ChildChunks[i]->ChunkObject->BeginSelfDestruct(true);
-							}
-							else
-							{
-								ChildChunks[i]->ChunkObject->BeginSelfDestruct(false);
-							}
-						}
+						ChildChunks[i]->ChunkObject->BeginSelfDestruct();
 					}
 				}
 			}
@@ -399,28 +371,10 @@ void APlanetSpawner::BeginPlay()
 			Character = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
 		}
 	}
-	
-	
-
-	// Check for chunks that need to be removed
-	TArray<FChunkTree*> ChunksToRemove;
-	ChunkTree1.FindConfiguredChunks(ChunksToRemove, false);
-	ChunkTree2.FindConfiguredChunks(ChunksToRemove, false);
-	ChunkTree3.FindConfiguredChunks(ChunksToRemove, false);
-	ChunkTree4.FindConfiguredChunks(ChunksToRemove, false);
-	ChunkTree5.FindConfiguredChunks(ChunksToRemove, false);
-	ChunkTree6.FindConfiguredChunks(ChunksToRemove, false);
 
 
 	bIsLoading = true;
 	
-	for (int32 i = 0; i < ChunksToRemove.Num(); i++)
-	{
-		if (ChunksToRemove[i]->ChunkObject->ChunkStatus != UChunkObject::EChunkStatus::REMOVING)
-		{
-			ChunksToRemove[i]->ChunkObject->BeginSelfDestruct(true);
-		}
-	}
 	
 	if (Character == nullptr)
 	{
@@ -438,21 +392,6 @@ void APlanetSpawner::BeginPlay()
 	Super::BeginPlay();
 }
 
-void APlanetSpawner::OnConstruction(const FTransform& Transform)
-{
-	Super::OnConstruction(Transform);
-	SetActorTickEnabled(false);
-	
-	for (FEditorViewportClient* ViewportClient : GEditor->GetAllViewportClients())
-	{
-		if (ViewportClient->IsLevelEditorClient())
-		{
-			ViewportClient->SetShowStats(true);
-		}
-	}
-	
-	RegeneratePlanet(false);
-}
 
 void APlanetSpawner::RegeneratePlanet(bool bRecompileShaders = true)
 {
@@ -489,6 +428,23 @@ void APlanetSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 }
 
 #if WITH_EDITOR
+
+void APlanetSpawner::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	SetActorTickEnabled(false);
+	
+	for (FEditorViewportClient* ViewportClient : GEditor->GetAllViewportClients())
+	{
+		if (ViewportClient->IsLevelEditorClient())
+		{
+			ViewportClient->SetShowStats(true);
+		}
+	}
+	
+	RegeneratePlanet(false);
+}
+
 void APlanetSpawner::PostRegisterAllComponents()
 {
 	Super::PostRegisterAllComponents();
@@ -518,17 +474,26 @@ void APlanetSpawner::OnPreBeginPIE(const bool bIsSimulating)
 
 void APlanetSpawner::OnEndPIE(const bool bIsSimulating)
 {
-	SetActorTickEnabled(true);
 	if (SafetyCheck())
 	{
 		bIsRegenerating = true;
 		PrecomputeChunkData();
+		SetActorTickEnabled(true);
 		bIsRegenerating = false;
 	}
 }
 
 void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event)
 {
+	
+	for (FEditorViewportClient* ViewportClient : GEditor->GetAllViewportClients())
+	{
+		if (ViewportClient->IsLevelEditorClient())
+		{
+			ViewportClient->SetShowStats(true);
+		}
+	}
+	
 	if (Event.ChangeType == EPropertyChangeType::Interactive)
 	{
 		return;
@@ -651,6 +616,7 @@ void APlanetSpawner::Tick(float DeltaTime)
 	BuildPlanet();
 	FChunkTree::CompletionsThisFrame = 0;
 	
+#if WITH_EDITOR
 	// Print all chunks count
 	TArray<FChunkTree*> AllChunks;
 	ChunkTree1.FindConfiguredChunks(AllChunks, true, false);
@@ -660,6 +626,7 @@ void APlanetSpawner::Tick(float DeltaTime)
 	ChunkTree5.FindConfiguredChunks(AllChunks, true, false);
 	ChunkTree6.FindConfiguredChunks(AllChunks, true, false);
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Green, FString::Printf(TEXT("Total Chunks: %d"), AllChunks.Num()));
+#endif
 
 	if (bIsLoading)
 	{
@@ -929,7 +896,16 @@ void APlanetSpawner::PrecomputeChunkData()
 			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: No TerrainCurve assets assigned to biomes!"));
 		}
 
-		uint8 ParameterCount = 5;
+		// Calculate max mask count to determine texture width
+		int32 MaxMaskCount = 0;
+		for (const FBiomeData& Biome : PlanetData->BiomeData)
+		{
+			MaxMaskCount = FMath::Max(MaxMaskCount, Biome.BiomeMaskIndices.Num());
+		}
+
+		// Layout: [0]=Count, [1..N]=MaskIndices, [N+1]=Curve, [N+2]=Forest, [N+3]=Material
+		// Min width if MaxMaskCount is 0: [Count=0], [Curve], [Forest], [Material] -> 4 params
+		uint8 ParameterCount = MaxMaskCount + 4;
 
 		PlanetData->GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, PlanetData->BiomeData.Num(), PF_R16F);
 
@@ -945,13 +921,31 @@ void APlanetSpawner::PrecomputeChunkData()
 
 		for (int32 y = 0; y < PlanetData->BiomeData.Num(); y++)
 		{
-			RawImageData[y * ParameterCount + 0] = PlanetData->BiomeData[y].MinTemperature;
-			RawImageData[y * ParameterCount + 1] = PlanetData->BiomeData[y].MaxTemperature;
-			RawImageData[y * ParameterCount + 2] = PlanetData->BiomeData[y].TerrainCurveIndex;
-			RawImageData[y * ParameterCount + 3] = PlanetData->BiomeData[y].bGenerateForest;
-			RawImageData[y * ParameterCount + 4] = PlanetData->BiomeData[y].MaterialLayerIndex;
+			const FBiomeData& Biome = PlanetData->BiomeData[y];
+			int32 MaskCount = Biome.BiomeMaskIndices.Num();
 
-			UniqueLayers.AddUnique(PlanetData->BiomeData[y].MaterialLayerIndex);
+			// New Layout: [0]=Curve, [1]=Forest, [2]=Material, [3]=Count, [4..N]=Masks
+			
+			// Fixed Params at start
+			RawImageData[y * ParameterCount + 0] = Biome.TerrainCurveIndex;
+			RawImageData[y * ParameterCount + 1] = Biome.bGenerateForest;
+			RawImageData[y * ParameterCount + 2] = Biome.MaterialLayerIndex;
+			RawImageData[y * ParameterCount + 3] = MaskCount;
+
+			// Variable Masks at end
+			for (int32 m = 0; m < MaxMaskCount; m++)
+			{
+				if (m < MaskCount)
+				{
+					RawImageData[y * ParameterCount + 4 + m] = Biome.BiomeMaskIndices[m];
+				}
+				else
+				{
+					RawImageData[y * ParameterCount + 4 + m] = 0; // Padding
+				}
+			}
+
+			UniqueLayers.AddUnique(Biome.MaterialLayerIndex);
 		}
 
 

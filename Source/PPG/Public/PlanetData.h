@@ -19,10 +19,7 @@ struct FBiomeData
     GENERATED_BODY()
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Environment")
-	float MinTemperature = 0.0f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Environment")
-	float MaxTemperature = 1.0f;
+	TArray<int32> BiomeMaskIndices;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Terrain")
 	TObjectPtr<UCurveLinearColor> TerrainCurve;

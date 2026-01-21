@@ -25,7 +25,7 @@ struct FChunkTree
 	TSharedPtr<FChunkTree> Child3;
 	TSharedPtr<FChunkTree> Child4;
 	
-	UPROPERTY()
+	UPROPERTY(Transient)
 	TObjectPtr<UChunkObject> ChunkObject = nullptr;
 	
 	// Height of the highest vertex in this chunk
@@ -176,6 +176,6 @@ public:
 private:
 	FChunkTree ChunkTree1, ChunkTree2, ChunkTree3, ChunkTree4, ChunkTree5, ChunkTree6;
 
-	UPROPERTY()
+	UPROPERTY(Transient)
 	TObjectPtr<AActor> FoliageActor;
 };

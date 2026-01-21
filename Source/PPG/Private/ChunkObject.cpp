@@ -164,12 +164,6 @@ void UChunkObject::SpawnFoliageComponent(FFoliageRuntimeData& Data)
 
 void UChunkObject::GenerateChunk()
 {
-	// Early out if object is being destroyed or aborted
-	if (!IsValidLowLevel() || bAbortAsync)
-	{
-		return;
-	}
-	
 	ChunkStatus = EChunkStatus::GENERATING;
 
 	// Init Stats
@@ -255,7 +249,7 @@ void UChunkObject::TickGPUReadback()
 		return;
 	}
 
-	if (bAbortAsync && ChunkStatus == EChunkStatus::WAITING_FOR_GPU)
+	if (bAbortAsync)
 	{
 		// Clear our reference to the readback buffers
 		GPUReadback.OutputBuffer.Reset();
@@ -1156,16 +1150,10 @@ void UChunkObject::FreeComponents()
 }
 
 
-void UChunkObject::BeginSelfDestruct(bool bFreeComponents)
+void UChunkObject::BeginSelfDestruct()
 {
-	bAbortAsync = true;
-	
-	if (bFreeComponents)
-	{
-		FreeComponents();
-	}
-
 	ChunkStatus = EChunkStatus::REMOVING;
+	bAbortAsync = true;
 }
 
 void UChunkObject::SelfDestruct()
@@ -1198,6 +1186,10 @@ void UChunkObject::SelfDestruct()
 	Biomes.Shrink();
 	FoliageRuntimeData.Empty();
 	FoliageRuntimeData.Shrink();
+	
+	// Clear our reference to the readback buffers
+	GPUReadback.OutputBuffer.Reset();
+	GPUReadback.OutputVCBuffer.Reset();
 
 	ConditionalBeginDestroy();
 }

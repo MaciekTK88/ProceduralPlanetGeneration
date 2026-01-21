@@ -26,7 +26,6 @@ struct TerrainData
     float erosion;
     float finalElevation;
     uint forestNoise;
-    int biomeIndex;
     uint3 top3BiomeIndices;
     float3 top3BiomeStrengths;
 };
@@ -208,140 +207,123 @@ float readCurveB(int row, float x)
     return value;
 }
 
-//parameter 0 = minTemp parameter 1 = maxTemp parameter 2 = curveIndex parameter 3 = isforestbiome parameter 4 = MaterialLayerIndex
+#include "BiomeMasks.usf"
+
+//parameter 0 = Curve, 1 = Forest, 2 = Material, 3 = MaskCount, 4..N = MaskIndices
 float ReadBiomeDataTexture(uint biomeindex, uint parameter)
 {
     return BiomeDataTexture[uint2(parameter, biomeindex)];
 }
 
-
-// Helper function to handle inclusive/exclusive range logic
-bool InTempRange(float t, float mn, float mx)
-{
-    if (mx >= 1.0f - 1e-6)    // if this biome truly goes to the top
-        return t >= mn && t <= mx;
-    else
-        return t >= mn && t <  mx;
-}
-
 float3 sampleBiomes(
-    float3 pos,
-    float x,
-    float y,
-    float z,
-    float temperatureNoiseScale,
-    float BiomeBlendNoiseScale,
-    out uint dominantBiomeIndex,
+    float3 pos, // Planet position
+    float height, // Specialized for mask inputs
+    float arg1,
+    float arg2,
+    float arg3,
     out uint3 top3BiomeIndices,
     out float3 top3BiomeStrengths
 )
 {
     static const uint MAX_BIOMES_STATIC = 16; 
-
-    float temperature = evaluateTemperature(pos, temperatureNoiseScale);
-
-    float weights[MAX_BIOMES_STATIC]; 
-    float totalWeight = 0.0;
-
     uint actualLoopCount = min(biomeCount, MAX_BIOMES_STATIC);
+    
+    // Max masks we can cache (e.g. indices 0 to 15)
+    static const int MAX_MASK_CACHE = 16;
 
-    for (uint i = 0; i < actualLoopCount; ++i)
+    // CACHE: Store results of GetBiomeMask to avoid re-calculation
+    // Initialize to -1.0 to indicate "not calculated yet"
+    float maskCache[MAX_MASK_CACHE];
+    for(int m = 0; m < MAX_MASK_CACHE; m++) maskCache[m] = -1.0;
+
+    // Pass 1: Coverage Calculation (Top-Down Layering)
+    // Iterate from highest priority (last biome) to lowest (base)
+    float weights[MAX_BIOMES_STATIC];
+    for (int k = 0; k < MAX_BIOMES_STATIC; k++) weights[k] = 0.0; // Init to 0
+
+    float coverage = 0.0;
+
+    // Iterate from top layer down to layer 1
+    for (int i = actualLoopCount - 1; i >= 1; --i) 
     {
-        float minT = (ReadBiomeDataTexture(i, 0));
-        float maxT = (ReadBiomeDataTexture(i, 1));
+        if (coverage >= 0.999) break;
 
-        if (maxT > 0.99)
+        int count = int(ReadBiomeDataTexture(i, 3)); // Index 3 is MaskCount
+        float combinedMask = 1.0;
+
+        for (int m = 0; m < count; m++)
         {
-            maxT = 1.0 + maxT;
+            int maskIdx = int(ReadBiomeDataTexture(i, 4 + m)); // Masks start at 4
+            float maskVal = 0.0;
+
+            // Check Cache
+            if (maskIdx < MAX_MASK_CACHE)
+            {
+                if (maskCache[maskIdx] < -0.5) // if -1
+                {
+                    maskCache[maskIdx] = GetBiomeMask(maskIdx, pos, height);
+                }
+                maskVal = maskCache[maskIdx];
+            }
+            else
+            {
+                // Fallback for high indices (uncached)
+                maskVal = GetBiomeMask(maskIdx, pos, height);
+            }
+
+            combinedMask *= maskVal;
         }
-        if (minT < 0.001)
-        {
-            minT = -maxT;
-        }
-
-        float halfRange = (maxT - minT) * 0.5;
-        float center = minT + halfRange;
-
-        float tempWeight = pow(saturate(1.0 - abs(temperature - center) / halfRange), 1.5);
         
-        float bias = pow(fbmE(pos * BiomeBlendNoiseScale + float3(i, i + 1, i + 2), 2, 2.0), 2) + 0.001; // add small value to avoid zero bias
-        float w = tempWeight * bias;
-        totalWeight += w;
-        weights[i] = w;
-        
+        float contribution = min(combinedMask, 1.0 - coverage);
+        weights[i] = contribution;
+        coverage += contribution;
     }
+    // Base biome (0) fills the gaps
+    weights[0] = 1.0 - coverage;
 
-    //Apply sharpening to weights (moved here so top-3 uses sharpened values)
-    float sharpness = 4.0; // Tune this value (e.g., 4.0-10.0) for desired transition sharpness
-    float sharpenedTotal = 0.0;
-    for (uint i = 0; i < actualLoopCount; ++i)
-    {
-        weights[i] = pow(max(weights[i], 0.0), sharpness);
-        sharpenedTotal += weights[i];
-    }
-
-    // Find top 3 biome indices (now using sharpened weights)
+    // Pass 2: Select Top 3 for Materials (Sorting)
     uint topIdx[3] = {0, 0, 0};
-    float topW[3]  = {-1.0, -1.0, -1.0};
+    float topW[3] = {0.0, 0.0, 0.0};
 
-    float3 result = float3(0, 0, 0);
-    dominantBiomeIndex = 0;
-
-    for (uint i = 0; i < actualLoopCount; ++i)
+    // Find top 3 by weight
+    for (int i = 0; i < actualLoopCount; ++i)
     {
         float w = weights[i];
-        if (w > 0.0)
-        {
-            if (w > topW[0])
-            {
-                topW[2] = topW[1]; topIdx[2] = topIdx[1];
-                topW[1] = topW[0]; topIdx[1] = topIdx[0];
-                topW[0] = w;       topIdx[0] = i;
-            }
-            else if (w > topW[1])
-            {
-                topW[2] = topW[1]; topIdx[2] = topIdx[1];
-                topW[1] = w;       topIdx[1] = i;
-            }
-            else if (w > topW[2])
-            {
-                topW[2] = w;       topIdx[2] = i;
-            }
+        if (w > topW[0]) {
+            topW[2] = topW[1]; topIdx[2] = topIdx[1];
+            topW[1] = topW[0]; topIdx[1] = topIdx[0];
+            topW[0] = w;       topIdx[0] = i;
+        } else if (w > topW[1]) {
+            topW[2] = topW[1]; topIdx[2] = topIdx[1];
+            topW[1] = w;       topIdx[1] = i;
+        } else if (w > topW[2]) {
+            topW[2] = w;       topIdx[2] = i;
         }
     }
+    
+    top3BiomeIndices = uint3(topIdx[0], topIdx[1], topIdx[2]);
 
-    uint finalIdx1 = topIdx[0];
-    uint finalIdx2 = (topW[1] >= 0.0) ? topIdx[1] : finalIdx1;
-    uint finalIdx3 = (topW[2] >= 0.0) ? topIdx[2] : finalIdx2;
+    // Normalize top 3 for material blending
+    float sum = topW[0] + topW[1] + topW[2];
+    if (sum > 0.001) {
+        top3BiomeStrengths = float3(topW[0] / sum, topW[1] / sum, topW[2] / sum);
+    } else {
+         // Fallback shouldn't happen usually due to base layer, but good for safety
+        top3BiomeStrengths = float3(1.0, 0.0, 0.0);
+    }
 
-    top3BiomeIndices = uint3(finalIdx1, finalIdx2, finalIdx3);
-    dominantBiomeIndex = finalIdx1;
+    // Terrain Blending: Uses all biomes
+    float3 result = float3(0, 0, 0);
 
-    // Normalize top3 weights to [0,1]
-    float normSum = max(topW[0], 0.0) + max(topW[1], 0.0) + max(topW[2], 0.0);
-    //normSum = max(normSum, 0.0000000001); // Avoid div-by-zero if all zero
-    top3BiomeStrengths = float3(
-        max(topW[0], 0.0) / normSum,
-        max(topW[1], 0.0) / normSum,
-        max(topW[2], 0.0) / normSum
-    );
-
-    // Blend result using sharpened normalized weights
-    for (uint i = 0; i < actualLoopCount; ++i)
+    for (int i = 0; i < actualLoopCount; ++i)
     {
-        if (weights[i] > 0.0)
-        {
-            float normW = weights[i] / sharpenedTotal;
-            
-            float rawCurveIndex = ReadBiomeDataTexture(i, 2) + 0.1;
-            uint curveIndex = uint(clamp(rawCurveIndex, 0.0, 255.0));
+        float curveValue = readCurveR(int(ReadBiomeDataTexture(i, 0)), arg1); // Index 0 is Curve
+        float forestValue = readCurveG(int(ReadBiomeDataTexture(i, 0)), arg2); // Index 0 is Curve
+        float materialValue = readCurveB(int(ReadBiomeDataTexture(i, 0)), arg3); // Index 0 is Curve
 
-            result += normW * float3(
-                readCurveR(curveIndex, x),
-                readCurveG(curveIndex, y),
-                readCurveB(curveIndex, z)
-            );
-        }
+        result.x += curveValue * weights[i];
+        result.y += forestValue * weights[i];
+        result.z += materialValue * weights[i];
     }
 
     return result;
@@ -356,7 +338,13 @@ void WritePlanetData(
 {
     int verticesAmount = chunkQuality + 1;
     
-    uint3 top3MaterialLayerIndices = uint3(ReadBiomeDataTexture(terrainData.top3BiomeIndices.x, 4), ReadBiomeDataTexture(terrainData.top3BiomeIndices.y, 4), ReadBiomeDataTexture(terrainData.top3BiomeIndices.z, 4));
+    // Index 2 is MaterialLayerIndex
+    uint3 top3MaterialLayerIndices = uint3(
+        ReadBiomeDataTexture(terrainData.top3BiomeIndices.x, 2), 
+        ReadBiomeDataTexture(terrainData.top3BiomeIndices.y, 2), 
+        ReadBiomeDataTexture(terrainData.top3BiomeIndices.z, 2)
+    );
+    
     BiomeMap[DispatchThreadID.xy] = float4(float3(float(top3MaterialLayerIndices.x) / 255.0, float(top3MaterialLayerIndices.y) / 255.0, float(top3MaterialLayerIndices.z) / 255.0), (clamp(terrainData.finalElevation, -1.0, 0.0) + 1.0));
     BiomeMap[DispatchThreadID.xy + int2(0, verticesAmount)] = float4(terrainData.top3BiomeStrengths, 1.0);
 
@@ -369,7 +357,7 @@ void WritePlanetData(
     Output[index + 2] = chunkLocalPos.z;
     OutputVC[index] = uint(terrainData.erosion * 255);
     OutputVC[index + 1] = terrainData.forestNoise;
-    OutputVC[index + 2] = uint(terrainData.biomeIndex);
+    OutputVC[index + 2] = uint(terrainData.top3BiomeIndices.x);
 }
 
 

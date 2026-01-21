@@ -2,7 +2,7 @@
 //Write your planet generation logic here. Use the PlanetPos variable as the position for noise sampling.
 //Noise functions are available in the NoiseLib.usf file.
 //PlanetType is the same variable you set in planet data asset.
-//Use RecompileShaders changed command in editor to apply changes or press regenerate planet button.
+//To apply changes use Apply Shader Changes button in the planet actor details panel.
 //---------------------------------------------------------------------------------------
 
 #ifndef TERRAINSHADER_USF
@@ -12,40 +12,39 @@
 #include "NoiseLib.usf"
 
 
-TerrainData GetTerrainData(float3 planetPos, float3 normalizedPlanetPos)
+TerrainData GetTerrainData(float3 vertexPos, float3 normalizedPlanetPos)
 {
     TerrainData terrainData;
     terrainData.finalElevation = 0.0;
     terrainData.erosion = 0;
-    terrainData.biomeIndex = 0;
     terrainData.forestNoise = 0;
     terrainData.top3BiomeIndices = int3(0, 0, 0);
     terrainData.top3BiomeStrengths = float3(1, 0, 0);
         
 #if PlanetType == 0
 
-    planetPos *= 0.00000015;
+    vertexPos *= 0.00000015;
     
-    float erosion;
+    float erosion = 0.0;
     float finalElevation;
     
-    float3 shiftedPos = warpPosition(planetPos * 0.25, 0.25);
+    float3 shiftedPos = warpPosition(vertexPos * 0.25, 0.25);
     
-    float tectonicEffect = computeInstantPlateEffect(shiftedPos, 0.6) * 10;
+    float tectonicEffect = computeInstantPlateEffect(shiftedPos, 0.6) * 10 + 0.1;
     
-    float HillNoise   = ErosionHeightTriplanar(planetPos * 40, 1, erosion) / 1.25;
-    HillNoise += fbmE(planetPos * (200.0), 12, 1.0) * 0.02;
+    float HillNoise   = ErosionHeightTriplanar(vertexPos * 40, 1, erosion) / 1.25;
+    HillNoise += fbmE(vertexPos * (200.0), 12, 1.0) * 0.02;
 
 
     
-    //use this function to sample the biome terrain curves that you set up in planet data asset. Modify only 6 first parameters.
-    float3 curveHeight = sampleBiomes(normalizedPlanetPos, HillNoise, tectonicEffect, erosion, 2,5, terrainData.biomeIndex, terrainData.top3BiomeIndices, terrainData.top3BiomeStrengths);
+    // Use this function to sample the biome terrain curves that you set up in planet data and to fill the top3BiomeIndices and top3BiomeStrengths
+    float3 curveHeight = sampleBiomes(vertexPos, tectonicEffect, HillNoise, tectonicEffect, erosion, terrainData.top3BiomeIndices, terrainData.top3BiomeStrengths);
     HillNoise = curveHeight.x;
     tectonicEffect = curveHeight.y;
     erosion = curveHeight.z;
     
     finalElevation = HillNoise * max(tectonicEffect, 0.3);
-    finalElevation += tectonicEffect / 2.0;
+    finalElevation += tectonicEffect / 1.5;
 
     finalElevation = flattenElevation(finalElevation, 0, 0.005);
 
@@ -53,19 +52,20 @@ TerrainData GetTerrainData(float3 planetPos, float3 normalizedPlanetPos)
     terrainData.finalElevation = finalElevation;
 
 
-    if (ReadBiomeDataTexture(terrainData.biomeIndex, 3) >= 0.95) // Check if biome is forest biome
+    // Index 1 is Forest Flag
+    if (ReadBiomeDataTexture(terrainData.top3BiomeIndices.x, 1) >= 0.95) // Check if biome is forest biome
     {
-        terrainData.forestNoise = uint(saturate((fbmE(shiftedPos * 80, 3, 1.0) - 0.6) * 5) * 255);
+        terrainData.forestNoise = uint(saturate((fbmE(vertexPos * 20, 3, 1.0) - 0.6) * 5) * 255);
     }
 
 
         
 #else
-    planetPos *= 0.00000015;
-    float finalElevation = ((fbmCraters(planetPos)) * 2 - 1) * 2.0;
+    vertexPos *= 0.00000015;
+    float finalElevation = ((fbmCraters(vertexPos)) * 2 - 1) * 2.0;
     finalElevation = finalElevation * 0.5 + 1.5;
     
-    finalElevation += (fbmE(planetPos * 100.0, 5, 1.0) * 2 - 1) * 0.007;
+    finalElevation += (fbmE(vertexPos * 100.0, 5, 1.0) * 2 - 1) * 0.007;
     terrainData.finalElevation = finalElevation;
         
 #endif

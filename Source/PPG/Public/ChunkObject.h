@@ -22,13 +22,13 @@ struct FFoliageRuntimeData
 {
 	GENERATED_BODY()
 	
-	UPROPERTY(VisibleDefaultsOnly, Category = "Foliage")
+	UPROPERTY(Transient)
 	TObjectPtr<UInstancedStaticMeshComponent> Ismc = nullptr;
 	
-	UPROPERTY(VisibleDefaultsOnly, Category = "Foliage")
+	UPROPERTY(Transient)
 	FFoliageList Foliage;
 
-	UPROPERTY(EditAnywhere, Category = "Foliage")
+	UPROPERTY(Transient)
 	TArray<FTransform> LocalFoliageTransforms;
 };
 
@@ -109,7 +109,7 @@ public:
 	void SetFoliageActor(AActor* NewFoliageActor);
 
 	UFUNCTION(BlueprintCallable, Category = "Chunk|Lifecycle")
-	void BeginSelfDestruct(bool bFreeComponents);
+	void BeginSelfDestruct();
 	
 	UFUNCTION(BlueprintCallable, Category = "Chunk|Lifecycle")
 	void FreeComponents();
