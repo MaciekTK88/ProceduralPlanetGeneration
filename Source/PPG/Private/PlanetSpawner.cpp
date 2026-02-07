@@ -1,4 +1,5 @@
-// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
 
 #include "PlanetSpawner.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -12,6 +13,7 @@
 #include "ChunkObject.h"
 #include "FoliageSpawner.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Materials/Material.h"
 
 
 void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* Planet, FChunkTree* ParentGeneratedChunk)
@@ -73,91 +75,10 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 		MaxChunkHeight = ParentGeneratedChunk->MaxChunkHeight;
 	}
 	
-	/*
-	bool ShouldSubdivide = false;
-	FVector ChunkVolumeOriginLocation = ChunkOriginLocation * (Planet->PlanetData->PlanetRadius + MaxChunkHeight / 2.0f);
 	
-	ChunkOriginLocation *= Planet->PlanetData->PlanetRadius;
-
-	// Safety check for root chunk at planet center
-	if (ChunkVolumeOriginLocation.IsNearlyZero())
-	{
-		ChunkVolumeOriginLocation = FVector(0, 0, 1); // Default up direction for safety
-	}
-
-	FVector ChunkNormal = ChunkVolumeOriginLocation.GetSafeNormal();
-
-	// Vector from camera to chunk center (world-space)
-	FVector CameraToChunk = ChunkOriginLocation - Planet->CharacterLocation;
-	float DistToCenter = CameraToChunk.Size();
-	
-	// Height-aware bounding radius (approx) - compute early for proximity checks
-	float ChunkRadius = LocalChunkSize * 0.70710678f; // sqrt(2)/2
-	float DistToSurface = DistToCenter - ChunkRadius;
-
-	// If camera is inside or very close to chunk bounds, always subdivide
-	if (DistToCenter < KINDA_SMALL_NUMBER)
-	{
-		ShouldSubdivide = true;
-	}
-	else if (DistToSurface < LocalChunkSize * 0.5f) // Within half chunk size of bounds
-	{
-		// Camera is very close to or inside chunk - always subdivide
-		ShouldSubdivide = true;
-	}
-	// Recursion limits
-	else if (RecursionLevel < Planet->PlanetData->MinRecursionLevel)
-	{
-		ShouldSubdivide = true;
-	}
-	else if (RecursionLevel >= Planet->PlanetData->MaxRecursionLevel)
-	{
-		ShouldSubdivide = false;
-	}
-	else
-	{
-		// Horizon / Backface Culling
-		FVector ViewDir = CameraToChunk / DistToCenter;
-		float DotResult = FVector::DotProduct(ChunkNormal, ViewDir);
-		constexpr float HorizonBias = 0.5f; // Slightly more permissive
-
-		// Cull only if not root AND chunk is definitely facing away
-		if (RecursionLevel > 0 && DotResult > HorizonBias)
-		{
-			ShouldSubdivide = false;
-		}
-		else
-		{
-			// Screen-Space LOD
-			// GetCurrentFOV() returns DEGREES - convert to radians
-			float FOVDegrees = Planet->GetCurrentFOV();
-			float FOVRad = FMath::DegreesToRadians(FOVDegrees);
-			
-			float TanHalfFOV = FMath::Tan(FOVRad * 0.5f);
-			if (TanHalfFOV < KINDA_SMALL_NUMBER)
-			{
-				ShouldSubdivide = false;
-			}
-			else
-			{
-				// This represents what fraction of screen height the chunk occupies
-				float ScreenOccupancy =
-					(LocalChunkSize / FMath::Max(DistToSurface, 1.0f)) / (2.0f * TanHalfFOV);
-				
-				// Subdivide if chunk takes up more than 40% of screen
-				constexpr float MaxScreenUV = 0.4f;
-
-				ShouldSubdivide = (ScreenOccupancy > MaxScreenUV);
-			}
-		}
-	}
-	*/
-	
-	
-	FVector CharacterSpherePos = Planet->CharacterLocation.GetSafeNormal();
-	// Calculate distance from character to chunk on sphere surface
-	float Distance = Planet->PlanetData->PlanetRadius * FMath::Acos(FVector::DotProduct(ChunkOriginLocation, CharacterSpherePos));
-	Distance = FMath::Sqrt(FMath::Pow(Distance,2) + FMath::Pow((Planet->CharacterLocation.Size() - (MaxChunkHeight + Planet->PlanetData->PlanetRadius)), 2));
+	// Calculate distance from character to chunk center on the sphere.
+	FVector ChunkWorldPos = ChunkOriginLocation * (Planet->PlanetData->PlanetRadius + MaxChunkHeight);
+	float Distance = FVector::Dist(Planet->CharacterLocation, ChunkWorldPos);
 
 	// Scale back to planet radius
 	ChunkOriginLocation *= Planet->PlanetData->PlanetRadius;
@@ -225,11 +146,12 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 		{
 			
 			ChunkObject = NewObject<UChunkObject>(Planet, UChunkObject::StaticClass(), NAME_None, RF_Transient);
+			PendingFrames = 0;
 			
 			
 			ChunkObject->PlanetData = Planet->PlanetData;
 			ChunkObject->SetSharedResources(&Planet->ChunkSMCPool, &Planet->FoliageISMCPool, &Planet->WaterSMCPool, &Planet->Triangles);
-			ChunkObject->InitializeChunk(LocalChunkSize, RecursionLevel, Planet->PlanetData->PlanetType, ChunkLocation, ChunkOriginLocation, ChunkRotation, MaxChunkHeight, Planet->MaterialLayersNum, Planet->CloseWaterMesh, Planet->FarWaterMesh);
+			ChunkObject->InitializeChunk(Planet->ChunkQuality, LocalChunkSize, RecursionLevel, ChunkLocation, ChunkOriginLocation, ChunkRotation, MaxChunkHeight, Planet->MaterialLayersNum, Planet->CloseWaterMesh, Planet->FarWaterMesh);
 			ChunkObject->SetFoliageActor(Planet->GetFoliageActor());
 			ChunkObject->bGenerateCollisions = Planet->bGenerateCollisions;
 			ChunkObject->bGenerateFoliage = Planet->bGenerateFoliage;
@@ -241,7 +163,18 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 		}
 		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
 		{
-			ChunkObject->GenerateChunk();
+			// Delay generation start based on recursion level:
+			// Higher recursion chunks wait more frames to prioritize closer LODs.
+			// Delay = floor(RecursionLevel / 2) frames (e.g. level 2 → 1, level 10 → 5)
+			int32 RequiredDelay = RecursionLevel / 2;
+			if (PendingFrames >= RequiredDelay)
+			{
+				ChunkObject->GenerateChunk();
+			}
+			else
+			{
+				PendingFrames++;
+			}
 		}
 		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::ABORTED)
 		{
@@ -393,17 +326,20 @@ void APlanetSpawner::BeginPlay()
 }
 
 
-void APlanetSpawner::RegeneratePlanet(bool bRecompileShaders = true)
+void APlanetSpawner::RegeneratePlanet()
 {
-	SetActorTickEnabled(false);
-
-#if WITH_EDITOR
-		if (GEngine && bRecompileShaders)
+	// Safety check: Don't regenerate if material is compiling
+	if (PlanetData && PlanetData->GenerationMaterial)
+	{
+		UMaterial* BaseMat = PlanetData->GenerationMaterial->GetMaterial();
+		if (BaseMat && BaseMat->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel))
 		{
-			GEngine->Exec(NULL, TEXT("recompileshaders changed"));
+			UE_LOG(LogTemp, Warning, TEXT("PlanetSpawner: Skipping regeneration because material is compiling."));
+			return;
 		}
-#endif
-	
+	}
+
+	SetActorTickEnabled(false);
 	ClearComponents();
 	
 	if (SafetyCheck())
@@ -413,11 +349,6 @@ void APlanetSpawner::RegeneratePlanet(bool bRecompileShaders = true)
 		bIsRegenerating = false;
 		SetActorTickEnabled(true);
 	}
-}
-
-void APlanetSpawner::ApplyShaderChanges()
-{
-	RegeneratePlanet(true);
 }
 
 
@@ -441,8 +372,22 @@ void APlanetSpawner::OnConstruction(const FTransform& Transform)
 			ViewportClient->SetShowStats(true);
 		}
 	}
+
+	// Ensure generation material is compiled before first use
+	if (PlanetData && PlanetData->GenerationMaterial)
+	{
+		UMaterialInterface* GenMaterial = PlanetData->GenerationMaterial;
+		
+		// Get the base material (in case it's a material instance)
+		UMaterial* BaseMaterial = GenMaterial->GetMaterial();
+		if (BaseMaterial && !BaseMaterial->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel))
+		{
+			BaseMaterial->ForceRecompileForRendering();
+			BaseMaterial->MarkPackageDirty();
+		}
+	}
 	
-	RegeneratePlanet(false);
+	RegeneratePlanet();
 }
 
 void APlanetSpawner::PostRegisterAllComponents()
@@ -451,6 +396,7 @@ void APlanetSpawner::PostRegisterAllComponents()
 	PreBeginPIEDelegateHandle = FEditorDelegates::PreBeginPIE.AddUObject(this, &APlanetSpawner::OnPreBeginPIE);
 	EndPIEDelegateHandle = FEditorDelegates::EndPIE.AddUObject(this, &APlanetSpawner::OnEndPIE);
 	OnObjectPropertyChangedDelegateHandle = FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(this, &APlanetSpawner::OnObjectPropertyChanged);
+	OnMaterialCompilationFinishedDelegateHandle = UMaterial::OnMaterialCompilationFinished().AddUObject(this, &APlanetSpawner::OnMaterialCompilationFinished);
 }
 
 void APlanetSpawner::BeginDestroy()
@@ -459,6 +405,7 @@ void APlanetSpawner::BeginDestroy()
 	FEditorDelegates::PreBeginPIE.Remove(PreBeginPIEDelegateHandle);
 	FEditorDelegates::EndPIE.Remove(EndPIEDelegateHandle);
 	FCoreUObjectDelegates::OnObjectPropertyChanged.Remove(OnObjectPropertyChangedDelegateHandle);
+	UMaterial::OnMaterialCompilationFinished().Remove(OnMaterialCompilationFinishedDelegateHandle);
 	
 	ClearComponents();
 	
@@ -511,24 +458,134 @@ void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEv
 		return;
 	}
 
+	// Check if PlanetData reference changed on the spawner itself
+	if (Object == this && Event.Property)
+	{
+		FName PropertyName = Event.Property->GetFName();
+		if (PropertyName == GET_MEMBER_NAME_CHECKED(APlanetSpawner, PlanetData))
+		{
+			// PlanetData asset was switched - compile the new generation material
+			if (PlanetData && PlanetData->GenerationMaterial)
+			{
+				UMaterial* BaseMaterial = PlanetData->GenerationMaterial->GetMaterial();
+				if (BaseMaterial)
+				{
+					UE_LOG(LogTemp, Log, TEXT("PlanetData switched - compiling generation material"));
+					BaseMaterial->ForceRecompileForRendering();
+					BaseMaterial->MarkPackageDirty();
+				}
+			}
+			return;
+		}
+	}
+
 	if (Object == PlanetData)
 	{
+		// Check if GenerationMaterial property changed
+		if (Event.Property)
+		{
+			FName PropertyName = Event.Property->GetFName();
+			if (PropertyName == GET_MEMBER_NAME_CHECKED(UPlanetData, GenerationMaterial))
+			{
+				// Generation material was switched - compile it
+				if (PlanetData->GenerationMaterial)
+				{
+					UMaterial* BaseMaterial = PlanetData->GenerationMaterial->GetMaterial();
+					if (BaseMaterial)
+					{
+						UE_LOG(LogTemp, Log, TEXT("GenerationMaterial switched - compiling material"));
+						BaseMaterial->ForceRecompileForRendering();
+						BaseMaterial->MarkPackageDirty();
+					}
+				}
+				return;
+			}
+		}
+		
 		bIsRegenerating = true;
-		RegeneratePlanet(false);
+		RegeneratePlanet();
 		bIsRegenerating = false;
 	}
 	else if (PlanetData && PlanetData->BiomeData.Num() > 0)
 	{
-		// Check if it's one of our foliage data assets
+		// Check if it's one of our foliage data assets or terrain curves
 		for (const FBiomeData& Biome : PlanetData->BiomeData)
 		{
-			if (Object == Biome.FoliageData || Object == Biome.ForestFoliageData)
+			if (Object == Biome.FoliageData || Object == Biome.ForestFoliageData || Object == Biome.TerrainCurve)
 			{
 				bIsRegenerating = true;
-				RegeneratePlanet(false);
+				RegeneratePlanet();
 				bIsRegenerating = false;
 				return;
 			}
+		}
+	}
+}
+
+void APlanetSpawner::OnMaterialCompilationFinished(UMaterialInterface* Material)
+{
+	// Check if the compiled material is our generation material
+	if (!PlanetData || !PlanetData->GenerationMaterial || bIsRegenerating || !Material)
+	{
+		return;
+	}
+
+	UMaterialInterface* GenMaterial = PlanetData->GenerationMaterial;
+	
+	// Quick check: if the base materials are different, no relationship possible
+	UMaterial* CompiledBaseMaterial = Material->GetMaterial();
+	UMaterial* GenBaseMaterial = GenMaterial->GetMaterial();
+	if (CompiledBaseMaterial != GenBaseMaterial)
+	{
+		return; // Early out - different base materials, no relationship
+	}
+
+	// Check if the material that finished compiling is the generation material (or its parent)
+	UMaterialInterface* CurrentMaterial = Material;
+
+	// Walk up the parent chain to check if this material is related to our generation material
+	while (CurrentMaterial)
+	{
+		if (CurrentMaterial == GenMaterial)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Generation material recompiled - regenerating planet"));
+			bIsRegenerating = true;
+			RegeneratePlanet();
+			bIsRegenerating = false;
+			return;
+		}
+		
+		// If GenMaterial is a material instance, get its parent
+		if (UMaterialInstance* MatInstance = Cast<UMaterialInstance>(CurrentMaterial))
+		{
+			CurrentMaterial = MatInstance->Parent;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	// Also check if GenMaterial is an instance and Material is its base
+	UMaterialInterface* GenCurrent = GenMaterial;
+	while (GenCurrent)
+	{
+		if (GenCurrent == Material)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Generation material parent recompiled - regenerating planet"));
+			bIsRegenerating = true;
+			RegeneratePlanet();
+			bIsRegenerating = false;
+			return;
+		}
+		
+		if (UMaterialInstance* MatInstance = Cast<UMaterialInstance>(GenCurrent))
+		{
+			GenCurrent = MatInstance->Parent;
+		}
+		else
+		{
+			break;
 		}
 	}
 }
@@ -680,6 +737,12 @@ bool APlanetSpawner::SafetyCheck()
 		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No Planet Material assigned in Planet Data! Please assign a Planet Material.")));
 		return false;
 	}
+	else if (PlanetData->GenerationMaterial == nullptr)
+	{
+		//print error on screen
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No Generation Material assigned in Planet Data! Please assign a Generation Material with 'Used with Lidar Point Cloud' enabled.")));
+		return false;
+	}
 	else if (PlanetData->bGenerateWater == true && (CloseWaterMesh == nullptr || FarWaterMesh == nullptr))
 	{
 		//print error on screen
@@ -799,13 +862,15 @@ void APlanetSpawner::DestroyChunkTrees() {
 
 void APlanetSpawner::PrecomputeChunkData()
 {
+	//==========================================================================
+	// Cleanup Existing GPU Resources
+	//==========================================================================
 	if (PlanetData->GPUBiomeData != nullptr)
 	{
 		PlanetData->GPUBiomeData->ConditionalBeginDestroy();
 		PlanetData->GPUBiomeData = nullptr;
 	}
 
-	// Generate CurveAtlas from biome TerrainCurve assets
 	if (PlanetData->CurveAtlas != nullptr)
 	{
 		PlanetData->CurveAtlas->ConditionalBeginDestroy();
@@ -813,199 +878,58 @@ void APlanetSpawner::PrecomputeChunkData()
 	}
 	
 	FlushRenderingCommands();
-	
 
+	//==========================================================================
+	// Generate Biome GPU Textures
+	//==========================================================================
 	if (PlanetData->BiomeData.Num() > 0)
 	{
-		// Calculate TerrainCurveIndex for each biome based on unique curves
-		TArray<UCurveLinearColor*> UniqueCurves;
-		for (int32 i = 0; i < PlanetData->BiomeData.Num(); i++)
-		{
-			FBiomeData& Biome = PlanetData->BiomeData[i];
-			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: Biome[%d] TerrainCurve = %s"), 
-				i, Biome.TerrainCurve ? *Biome.TerrainCurve->GetName() : TEXT("NULL"));
-			
-			if (Biome.TerrainCurve != nullptr)
-			{
-				int32 CurveIndex = UniqueCurves.Find(Biome.TerrainCurve);
-				if (CurveIndex == INDEX_NONE)
-				{
-					CurveIndex = UniqueCurves.Add(Biome.TerrainCurve);
-				}
-				Biome.TerrainCurveIndex = static_cast<uint8>(CurveIndex);
-			}
-			else
-			{
-				Biome.TerrainCurveIndex = 0;
-			}
-		}
-
-		// Generate CurveAtlas texture
-		if (UniqueCurves.Num() > 0)
-		{
-			int32 AtlasWidth = PlanetData->CurveAtlasWidth;
-			int32 AtlasHeight = UniqueCurves.Num();
-
-			PlanetData->CurveAtlas = UTexture2D::CreateTransient(AtlasWidth, AtlasHeight, PF_FloatRGBA);
-			PlanetData->CurveAtlas->MipGenSettings = TMGS_NoMipmaps;
-			PlanetData->CurveAtlas->SRGB = false;
-			PlanetData->CurveAtlas->Filter = TF_Nearest;
-			PlanetData->CurveAtlas->AddressX = TA_Clamp;
-			PlanetData->CurveAtlas->AddressY = TA_Clamp;
-
-			FTexture2DMipMap& CurveMipMap = PlanetData->CurveAtlas->GetPlatformData()->Mips[0];
-			
-			// Calculate the required size for float16 RGBA (8 bytes per pixel - 4 channels x 2 bytes each)
-			int32 DataSize = AtlasWidth * AtlasHeight * 4 * sizeof(FFloat16);
-			
-			FByteBulkData& CurveImageData = CurveMipMap.BulkData;
-			CurveImageData.Lock(LOCK_READ_WRITE);
-			FFloat16* RawCurveData = (FFloat16*)CurveImageData.Realloc(DataSize);
-
-			for (int32 CurveIdx = 0; CurveIdx < UniqueCurves.Num(); CurveIdx++)
-			{
-				UCurveLinearColor* Curve = UniqueCurves[CurveIdx];
-				
-				// Skip if curve became invalid during the process
-				if (!IsValid(Curve))
-				{
-					continue;
-				}
-				
-				for (int32 x = 0; x < AtlasWidth; x++)
-				{
-					float Time = static_cast<float>(x) / static_cast<float>(AtlasWidth - 1);
-					FLinearColor Color = Curve->GetLinearColorValue(Time);
-					
-					int32 PixelIndex = (CurveIdx * AtlasWidth + x) * 4;
-					RawCurveData[PixelIndex + 0] = FFloat16(Color.R);
-					RawCurveData[PixelIndex + 1] = FFloat16(Color.G);
-					RawCurveData[PixelIndex + 2] = FFloat16(Color.B);
-					RawCurveData[PixelIndex + 3] = FFloat16(Color.A);
-				}
-			}
-
-			CurveImageData.Unlock();
-			PlanetData->CurveAtlas->UpdateResource();
-
-			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: Generated CurveAtlas %dx%d from %d unique curves (float16 format, %d bytes)"),
-				AtlasWidth, AtlasHeight, UniqueCurves.Num(), DataSize);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: No TerrainCurve assets assigned to biomes!"));
-		}
-
-		// Calculate max mask count to determine texture width
-		int32 MaxMaskCount = 0;
-		for (const FBiomeData& Biome : PlanetData->BiomeData)
-		{
-			MaxMaskCount = FMath::Max(MaxMaskCount, Biome.BiomeMaskIndices.Num());
-		}
-
-		// Layout: [0]=Count, [1..N]=MaskIndices, [N+1]=Curve, [N+2]=Forest, [N+3]=Material
-		// Min width if MaxMaskCount is 0: [Count=0], [Curve], [Forest], [Material] -> 4 params
-		uint8 ParameterCount = MaxMaskCount + 4;
-
-		PlanetData->GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, PlanetData->BiomeData.Num(), PF_R16F);
-
-		PlanetData->GPUBiomeData->MipGenSettings = TMGS_NoMipmaps;
-		PlanetData->GPUBiomeData->SRGB = false;
-		PlanetData->GPUBiomeData->Filter = TF_Nearest;
-
-		FTexture2DMipMap& MipMap = PlanetData->GPUBiomeData->GetPlatformData()->Mips[0];
-		FByteBulkData& ImageData = MipMap.BulkData;
-		FFloat16* RawImageData = (FFloat16*)ImageData.Lock(LOCK_READ_WRITE);
-
-		TArray<uint8> UniqueLayers;
-
-		for (int32 y = 0; y < PlanetData->BiomeData.Num(); y++)
-		{
-			const FBiomeData& Biome = PlanetData->BiomeData[y];
-			int32 MaskCount = Biome.BiomeMaskIndices.Num();
-
-			// New Layout: [0]=Curve, [1]=Forest, [2]=Material, [3]=Count, [4..N]=Masks
-			
-			// Fixed Params at start
-			RawImageData[y * ParameterCount + 0] = Biome.TerrainCurveIndex;
-			RawImageData[y * ParameterCount + 1] = Biome.bGenerateForest;
-			RawImageData[y * ParameterCount + 2] = Biome.MaterialLayerIndex;
-			RawImageData[y * ParameterCount + 3] = MaskCount;
-
-			// Variable Masks at end
-			for (int32 m = 0; m < MaxMaskCount; m++)
-			{
-				if (m < MaskCount)
-				{
-					RawImageData[y * ParameterCount + 4 + m] = Biome.BiomeMaskIndices[m];
-				}
-				else
-				{
-					RawImageData[y * ParameterCount + 4 + m] = 0; // Padding
-				}
-			}
-
-			UniqueLayers.AddUnique(Biome.MaterialLayerIndex);
-		}
-
-
-		ImageData.Unlock();
-
-		// Free CPU bulk after upload
-		PlanetData->GPUBiomeData->UpdateResource();
-		MipMap.BulkData.RemoveBulkData();
-
-		MaterialLayersNum = UniqueLayers.Num();
-		
-		UE_LOG(LogTemp, Warning, TEXT("PrecomputeChunkData: Created Texture %dx%d. Valid: %s Resource: %s"), 
-			ParameterCount, PlanetData->BiomeData.Num(), 
-			PlanetData->GPUBiomeData ? TEXT("Yes") : TEXT("No"),
-			(PlanetData->GPUBiomeData && PlanetData->GPUBiomeData->GetResource()) ? TEXT("Yes") : TEXT("No")
-		);
+		GenerateCurveAtlas();
+		GenerateGPUBiomeData();
 	}
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("PrecomputeChunkData: BiomeData is Empty!"));
 	}
 
-
-
+	//==========================================================================
+	// Generate Triangle Index Buffer
+	//==========================================================================
 	Triangles.Empty();
-	int32 VerticesAmount = ChunkQuality + 1;
+	const int32 VerticesPerEdge = ChunkQuality + 1;
 
-	for (int y = 0; y < VerticesAmount - 1; y++)
+	for (int32 y = 0; y < VerticesPerEdge - 1; y++)
 	{
-		for (int x = 0; x < VerticesAmount - 1; x++)
+		for (int32 x = 0; x < VerticesPerEdge - 1; x++)
 		{
-			int32 v0 = x + y * VerticesAmount;
-			int32 v1 = v0 + 1;
-			int32 v2 = v0 + VerticesAmount;
-			int32 v3 = v2 + 1;
+			const int32 V0 = x + y * VerticesPerEdge;
+			const int32 V1 = V0 + 1;
+			const int32 V2 = V0 + VerticesPerEdge;
+			const int32 V3 = V2 + 1;
 
-			// Triangle 1
-			Triangles.Add(v0);
-			Triangles.Add(v2);
-			Triangles.Add(v1);
+			// First triangle (V0 -> V2 -> V1)
+			Triangles.Add(V0);
+			Triangles.Add(V2);
+			Triangles.Add(V1);
 
-			// Triangle 2
-			Triangles.Add(v1);
-			Triangles.Add(v2);
-			Triangles.Add(v3);
+			// Second triangle (V1 -> V2 -> V3)
+			Triangles.Add(V1);
+			Triangles.Add(V2);
+			Triangles.Add(V3);
 		}
 	}
 
+	//==========================================================================
+	// Initialize Foliage Actor
+	//==========================================================================
 	if (FoliageActor != nullptr)
 	{
-		// Destroy InstancedStaticMeshComponents
 		TArray<UInstancedStaticMeshComponent*> ISMCs;
 		FoliageActor->GetComponents<UInstancedStaticMeshComponent>(ISMCs);
 		for (UInstancedStaticMeshComponent* ISMC : ISMCs)
 		{
 			ISMC->DestroyComponent();
 		}
-		ISMCs.Empty();
-		
-		// Destroy the actor
 		FoliageActor->Destroy();
 	}
 	FoliageActor = nullptr;
@@ -1013,11 +937,169 @@ void APlanetSpawner::PrecomputeChunkData()
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.ObjectFlags = RF_Transient;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	FoliageActor = GetWorld()->SpawnActor<AFoliageSpawner>(AFoliageSpawner::StaticClass(), GetActorLocation(), FRotator(0.0f, 0.0f, 0.0f), SpawnParams);
+	FoliageActor = GetWorld()->SpawnActor<AFoliageSpawner>(
+		AFoliageSpawner::StaticClass(), 
+		GetActorLocation(), 
+		FRotator::ZeroRotator, 
+		SpawnParams
+	);
 	FoliageActor->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
 	
 	FlushRenderingCommands();
+}
 
+//------------------------------------------------------------------------------
+// Generate CurveAtlas Texture
+// Creates a texture atlas containing all unique TerrainCurve assets.
+// Format: PF_A32B32G32R32F, Width = CurveAtlasWidth, Height = UniqueCurveCount
+// Each row stores one curve sampled at CurveAtlasWidth points with full float precision.
+//------------------------------------------------------------------------------
+void APlanetSpawner::GenerateCurveAtlas()
+{
+	// Build list of unique curves and assign indices to biomes
+	TArray<UCurveVector*> UniqueCurves;
+	
+	for (int32 BiomeIdx = 0; BiomeIdx < PlanetData->BiomeData.Num(); BiomeIdx++)
+	{
+		FBiomeData& Biome = PlanetData->BiomeData[BiomeIdx];
+		
+		if (Biome.TerrainCurve != nullptr)
+		{
+			int32 CurveIdx = UniqueCurves.Find(Biome.TerrainCurve);
+			if (CurveIdx == INDEX_NONE)
+			{
+				CurveIdx = UniqueCurves.Add(Biome.TerrainCurve);
+			}
+			Biome.TerrainCurveIndex = static_cast<uint8>(CurveIdx);
+		}
+		else
+		{
+			Biome.TerrainCurveIndex = 0;
+		}
+	}
+
+	if (UniqueCurves.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GenerateCurveAtlas: No TerrainCurve assets assigned to biomes"));
+		return;
+	}
+
+	// Create texture with full 32-bit float precision
+	const int32 AtlasWidth = PlanetData->CurveAtlasWidth;
+	const int32 AtlasHeight = UniqueCurves.Num();
+
+	PlanetData->CurveAtlas = UTexture2D::CreateTransient(AtlasWidth, AtlasHeight, PF_A32B32G32R32F);
+	PlanetData->CurveAtlas->MipGenSettings = TMGS_NoMipmaps;
+	PlanetData->CurveAtlas->SRGB = false;
+	PlanetData->CurveAtlas->Filter = TF_Nearest;
+	PlanetData->CurveAtlas->AddressX = TA_Clamp;
+	PlanetData->CurveAtlas->AddressY = TA_Clamp;
+
+	// Fill texture data (A32B32G32R32F = 4 channels x 32-bit float)
+	FTexture2DMipMap& MipMap = PlanetData->CurveAtlas->GetPlatformData()->Mips[0];
+	const int32 DataSize = AtlasWidth * AtlasHeight * 4 * sizeof(float);
+	
+	FByteBulkData& BulkData = MipMap.BulkData;
+	BulkData.Lock(LOCK_READ_WRITE);
+	float* TexData = (float*)BulkData.Realloc(DataSize);
+
+	for (int32 CurveIdx = 0; CurveIdx < UniqueCurves.Num(); CurveIdx++)
+	{
+		UCurveVector* Curve = UniqueCurves[CurveIdx];
+		if (!IsValid(Curve))
+		{
+			continue;
+		}
+		
+		for (int32 x = 0; x < AtlasWidth; x++)
+		{
+			// Map texture coordinate [0, AtlasWidth-1] to curve input [-1, 1]
+			const float Time = (static_cast<float>(x) / static_cast<float>(AtlasWidth - 1)) * 2.0f - 1.0f;
+			const FVector VectorValue = Curve->GetVectorValue(Time);
+			
+			const int32 PixelIdx = (CurveIdx * AtlasWidth + x) * 4;
+			TexData[PixelIdx + 0] = static_cast<float>(VectorValue.X);
+			TexData[PixelIdx + 1] = static_cast<float>(VectorValue.Y);
+			TexData[PixelIdx + 2] = static_cast<float>(VectorValue.Z);
+			TexData[PixelIdx + 3] = 1.0f;
+		}
+	}
+
+	BulkData.Unlock();
+	PlanetData->CurveAtlas->UpdateResource();
+
+	UE_LOG(LogTemp, Log, TEXT("GenerateCurveAtlas: Created %dx%d atlas from %d curves (32-bit float)"), 
+		AtlasWidth, AtlasHeight, UniqueCurves.Num());
+}
+
+//------------------------------------------------------------------------------
+// Generate GPUBiomeData Texture
+// Creates a texture containing per-biome configuration data.
+// Format: PF_R32_UINT, Width = ParameterCount, Height = BiomeCount
+// Layout per row: [Curve][Forest][Material][MaskCount][Mask0..MaskN]
+//------------------------------------------------------------------------------
+void APlanetSpawner::GenerateGPUBiomeData()
+{
+	const int32 BiomeCount = PlanetData->BiomeData.Num();
+	
+	// Calculate max mask count to determine texture width
+	int32 MaxMaskCount = 0;
+	for (const FBiomeData& Biome : PlanetData->BiomeData)
+	{
+		MaxMaskCount = FMath::Max(MaxMaskCount, Biome.BiomeMaskIndices.Num());
+	}
+
+	// Texture layout: [Curve][Forest][Material][MaskCount][Mask0..MaskN]
+	const uint8 FixedParams = 4;
+	const uint8 ParameterCount = FixedParams + MaxMaskCount;
+
+	// Create texture with integer format to avoid float-to-int precision issues
+	PlanetData->GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, BiomeCount, PF_R32_UINT);
+	PlanetData->GPUBiomeData->MipGenSettings = TMGS_NoMipmaps;
+	PlanetData->GPUBiomeData->SRGB = false;
+	PlanetData->GPUBiomeData->Filter = TF_Nearest;
+
+	// Fill texture data (R32_UINT = 1 channel x 32-bit uint per texel)
+	FTexture2DMipMap& MipMap = PlanetData->GPUBiomeData->GetPlatformData()->Mips[0];
+	const int32 DataSize = ParameterCount * BiomeCount * sizeof(uint32);
+	FByteBulkData& BulkData = MipMap.BulkData;
+	BulkData.Lock(LOCK_READ_WRITE);
+	uint32* TexData = (uint32*)BulkData.Realloc(DataSize);
+
+	for (int32 BiomeIdx = 0; BiomeIdx < BiomeCount; BiomeIdx++)
+	{
+		const FBiomeData& Biome = PlanetData->BiomeData[BiomeIdx];
+		const int32 RowOffset = BiomeIdx * ParameterCount;
+		const int32 MaskCount = Biome.BiomeMaskIndices.Num();
+
+		// Fixed parameters (stored as exact integers)
+		TexData[RowOffset + 0] = static_cast<uint32>(Biome.TerrainCurveIndex);
+		TexData[RowOffset + 1] = Biome.bGenerateForest ? 1u : 0u;
+		TexData[RowOffset + 2] = static_cast<uint32>(Biome.MaterialLayerIndex);
+		TexData[RowOffset + 3] = static_cast<uint32>(MaskCount);
+
+		// Mask indices (padded with zeros)
+		for (int32 m = 0; m < MaxMaskCount; m++)
+		{
+			TexData[RowOffset + FixedParams + m] = (m < MaskCount) ? static_cast<uint32>(Biome.BiomeMaskIndices[m]) : 0u;
+		}
+	}
+
+	BulkData.Unlock();
+	PlanetData->GPUBiomeData->UpdateResource();
+	MipMap.BulkData.RemoveBulkData(); // Free CPU memory after GPU upload
+
+	// Calculate MaterialLayersNum (total layers in material stack)
+	// Equals MaxMaterialLayerIndex + 1 since indices are 0-based
+	uint8 MaxLayerIndex = 0;
+	for (const FBiomeData& Biome : PlanetData->BiomeData)
+	{
+		MaxLayerIndex = FMath::Max(MaxLayerIndex, Biome.MaterialLayerIndex);
+	}
+	MaterialLayersNum = MaxLayerIndex + 1;
+	
+	UE_LOG(LogTemp, Log, TEXT("GenerateGPUBiomeData: Created %dx%d texture, MaterialLayersNum=%d"), 
+		ParameterCount, BiomeCount, MaterialLayersNum);
 }
 
 float APlanetSpawner::GetCurrentFOV() // Returns degrees

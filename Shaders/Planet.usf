@@ -1,29 +1,91 @@
-#include "/Engine/Public/Platform.ush"
-#include "GenerationUtilities.usf"
-#include "TerrainShader.usf"
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
+// Planet Compute Shader - Main entry point for terrain generation.
 
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "GenerationUtilities.usf"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
 
 //------------------------------------------------------------------------------
-//Main compute shader entry point.
-[numthreads(16, 16, 1)]
+// Main Compute Shader Entry Point
+// Dispatched once per vertex in the chunk grid (VerticesCount x VerticesCount).
+//------------------------------------------------------------------------------
+[numthreads(THREADS_X, THREADS_Y, THREADS_Z)]
 void PlanetComputeShader(
     uint3 DispatchThreadID : SV_DispatchThreadID,
+    uint3 GroupThreadID : SV_GroupThreadID,
     uint GroupIndex : SV_GroupIndex)
 {
+    const int verticesAmount = chunkQuality + 1;
     
-    int verticesAmount = (chunkQuality + 1);
+    // Early exit for out-of-bounds threads
     if (DispatchThreadID.x >= verticesAmount || DispatchThreadID.y >= verticesAmount)
         return;
 
-    float3 planetPos = GetVertexPosition(DispatchThreadID);
+    // Calculate vertex position on unit sphere
+    float3 planetPos = GetVertexPosition(DispatchThreadID.xy);
     float3 normalizedPlanetPos = normalize(planetPos);
     planetPos = normalizedPlanetPos * planetRadius;
 
+    //--------------------------------------------------------------------------
+    // Setup Material Parameters for Graph Evaluation
+    //--------------------------------------------------------------------------
+    FMaterialPixelParameters Parameters = MakeInitializedMaterialPixelParameters();
+    Parameters.VertexColor = half4(1, 1, 1, 1);
+    Parameters.WorldPosition_CamRelative = planetPos;
+    Parameters.AbsoluteWorldPosition = DFPromote(planetPos);
+    Parameters.ScreenPosition = float4(0, 0, 0, 0);
     
-    TerrainData terrainData = GetTerrainData(planetPos, normalizedPlanetPos);
+    // Store NORMALIZED direction in TexCoords for MaterialExpressionPlanetPosition node
+#if NUM_MATERIAL_TEXCOORDS >= 2
+    Parameters.TexCoords[0] = normalizedPlanetPos.xy;
+    Parameters.TexCoords[1].x = normalizedPlanetPos.z;
+#endif
 
+    //--------------------------------------------------------------------------
+    // Evaluate Material Graph
+    //--------------------------------------------------------------------------
+    FPixelMaterialInputs PixelMaterialInputs = (FPixelMaterialInputs)0;
+    CalcMaterialParameters(Parameters, PixelMaterialInputs, float4(DispatchThreadID.xy, 0, 0), true);
+
+    // Extract standard material outputs
+    float3 BaseColor = GetMaterialBaseColor(PixelMaterialInputs);
+
+    //--------------------------------------------------------------------------
+    // Build Terrain Data
+    //--------------------------------------------------------------------------
+    TerrainData terrainData;
     
+    // Read elevation and biome weights from ElevationOutput node
+    #if defined(NUM_MATERIAL_OUTPUTS_GETELEVATION) && NUM_MATERIAL_OUTPUTS_GETELEVATION >= 1
+        terrainData.finalElevation = GetElevation1(Parameters);
+    #else
+        terrainData.finalElevation = 0.0;
+    #endif
 
-    WritePlanetData(DispatchThreadID, normalizedPlanetPos, terrainData);
+    terrainData.CustomVertexColors = BaseColor;      // BaseColor = Custom Vertex Data
+    terrainData.top3BiomeIndices = uint3(0, 0, 0);
+    terrainData.top3BiomeStrengths = float3(1, 0, 0);
 
+    #if defined(NUM_MATERIAL_OUTPUTS_GETELEVATION) && NUM_MATERIAL_OUTPUTS_GETELEVATION >= 2
+        float4 packedMasks = GetElevation2(Parameters);
+        
+        float masks[8];
+        UnpackBiomeMasks(packedMasks, masks);
+
+        float maskOverrides[16];
+        for (int i = 0; i < 8; i++) maskOverrides[i] = masks[i];
+        for (int m = 8; m < 16; m++) maskOverrides[m] = 0.0;
+
+        float weights[16];
+        GetBiomeWeights(maskOverrides, weights, terrainData.top3BiomeIndices, terrainData.top3BiomeStrengths);
+    #endif
+
+
+    //--------------------------------------------------------------------------
+    // Write Output Data
+    //--------------------------------------------------------------------------
+    WritePlanetData(DispatchThreadID.xy, normalizedPlanetPos, terrainData);
 }

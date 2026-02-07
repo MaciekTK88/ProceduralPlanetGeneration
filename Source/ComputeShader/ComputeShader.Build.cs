@@ -27,7 +27,8 @@ public class ComputeShader: ModuleRules
 			"CoreUObject",
 			"RenderCore",
 			"RHI",
-			"Projects"
+			"Projects",
+			"Renderer"
 		});
 		
 		if (Target.bBuildEditor == true)

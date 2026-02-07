@@ -1,191 +1,249 @@
-// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
+//
+// Planet Compute Shader Implementation
+// Material-based compute shader that evaluates terrain generation per-vertex.
 
 #include "ComputeShader/Public/PlanetComputeShader/PlanetComputeShader.h"
-#include "PixelShaderUtils.h"
-#include "MeshPassProcessor.inl"
-#include "StaticMeshResources.h"
-#include "DynamicMeshBuilder.h"
-#include "RenderGraphResources.h"
-#include "GlobalShader.h"
-#include "UnifiedBuffer.h"
-#include "CanvasTypes.h"
-#include "MeshDrawShaderBindings.h"
-#include "RHIGPUReadback.h"
-#include "MeshPassUtils.h"
-#include "RenderGraphUtils.h"      // For FComputeShaderUtils::Dispatch
-#include "RHIStaticStates.h"
-#include "RHICommandList.h"
-#include "DynamicRHI.h"
-#include "RenderTargetPool.h"
-#include "MaterialShader.h"
 
+#include "GlobalShader.h"
+#include "MaterialShader.h"
+#include "MeshDrawShaderBindings.h"
+#include "MeshPassProcessor.inl"
+#include "MeshPassUtils.h"
+#include "RenderGraphResources.h"
+#include "RenderGraphUtils.h"
+#include "RenderTargetPool.h"
+#include "RHIGPUReadback.h"
+#include "StaticMeshResources.h"
+
+//------------------------------------------------------------------------------
+// Stats
+//------------------------------------------------------------------------------
 DECLARE_STATS_GROUP(TEXT("PlanetComputeShader"), STATGROUP_PlanetComputeShader, STATCAT_Advanced);
 DECLARE_CYCLE_STAT(TEXT("PlanetComputeShader Execute"), STAT_PlanetComputeShader_Execute, STATGROUP_PlanetComputeShader);
 
-// This class carries our parameter declarations and acts as the bridge between cpp and HLSL.
-class COMPUTESHADER_API FPlanetComputeShader: public FGlobalShader
+//------------------------------------------------------------------------------
+// Shader Declaration
+// Material-based compute shader for procedural terrain generation.
+// Uses FMeshMaterialShader to access material graph evaluation.
+//------------------------------------------------------------------------------
+class COMPUTESHADER_API FPlanetComputeShader : public FMeshMaterialShader
 {
 public:
-	
-	DECLARE_GLOBAL_SHADER(FPlanetComputeShader);
-	SHADER_USE_PARAMETER_STRUCT(FPlanetComputeShader, FGlobalShader);
-	
-	
-	class FPlanetComputeShader_Perm_TEST : SHADER_PERMUTATION_INT("PlanetType", 4);
-	using FPermutationDomain = TShaderPermutationDomain<
-		FPlanetComputeShader_Perm_TEST
-	>;
+	DECLARE_SHADER_TYPE(FPlanetComputeShader, MeshMaterial);
+	SHADER_USE_PARAMETER_STRUCT_WITH_LEGACY_BASE(FPlanetComputeShader, FMeshMaterialShader)
 
+	// Shader parameters bound from CPU
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		/*
-		* Here's where you define one or more of the input parameters for your shader.
-		* Some examples:
-		*/
-		// SHADER_PARAMETER(uint32, MyUint32) // On the shader side: uint32 MyUint32;
-		// SHADER_PARAMETER(FVector3f, MyVector) // On the shader side: float3 MyVector;
-
-		// SHADER_PARAMETER_TEXTURE(Texture2D, MyTexture) // On the shader side: Texture2D<float4> MyTexture; (float4 should be whatever you expect each pixel in the texture to be, in this case float4(R,G,B,A) for 4 channels)
-		// SHADER_PARAMETER_SAMPLER(SamplerState, MyTextureSampler) // On the shader side: SamplerState MySampler; // CPP side: TStaticSamplerState<ESamplerFilter::SF_Bilinear>::GetRHI();
-
-		//SHADER_PARAMETER_ARRAY(float, MyFloatArray, [3]) // On the shader side: float MyFloatArray[3];
-
-		// SHADER_PARAMETER_UAV(RWTexture2D<FVector4f>, MyTextureUAV) // On the shader side: RWTexture2D<float4> MyTextureUAV;
-		// SHADER_PARAMETER_UAV(RWStructuredBuffer<FMyCustomStruct>, MyCustomStructs) // On the shader side: RWStructuredBuffer<FMyCustomStruct> MyCustomStructs;
-		// SHADER_PARAMETER_UAV(RWBuffer<FMyCustomStruct>, MyCustomStructs) // On the shader side: RWBuffer<FMyCustomStruct> MyCustomStructs;
-
-		// SHADER_PARAMETER_SRV(StructuredBuffer<FMyCustomStruct>, MyCustomStructs) // On the shader side: StructuredBuffer<FMyCustomStruct> MyCustomStructs;
-		// SHADER_PARAMETER_SRV(Buffer<FMyCustomStruct>, MyCustomStructs) // On the shader side: Buffer<FMyCustomStruct> MyCustomStructs;
-		// SHADER_PARAMETER_SRV(Texture2D<FVector4f>, MyReadOnlyTexture) // On the shader side: Texture2D<float4> MyReadOnlyTexture;
-
-		// SHADER_PARAMETER_STRUCT_REF(FMyCustomStruct, MyCustomStruct)
-
-		//SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<float>, Agent)
+		// Input/Output buffers
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float3>, Input)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, BiomeMap)
-		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float4>, CurveAtlas)
-		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float>, BiomeDataTexture)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, Output)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutputVC)
-		SHADER_PARAMETER(uint32, biomeCount)
-		SHADER_PARAMETER(int32, chunkQuality)
+		
+		// Input textures
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<float4>, CurveAtlas)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D<uint>, BiomeDataTexture)
+		
+		// Chunk parameters
 		SHADER_PARAMETER(FVector3f, chunkLocation)
 		SHADER_PARAMETER(FIntVector, chunkRotation)
 		SHADER_PARAMETER(FVector3f, chunkOriginLocation)
 		SHADER_PARAMETER(float, chunkSize)
 		SHADER_PARAMETER(float, planetRadius)
 		SHADER_PARAMETER(float, noiseHeight)
+		SHADER_PARAMETER(uint32, biomeCount)
+		SHADER_PARAMETER(int32, chunkQuality)
 		
-
+		// View uniforms (required for material evaluation)
+		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	static bool ShouldCompilePermutation(const FMaterialShaderPermutationParameters& Parameters)
 	{
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-		
-		return true;
+		// Compile only for materials marked "Used with Lidar Point Cloud"
+		// This significantly reduces shader permutations while still providing material evaluation
+		return Parameters.MaterialParameters.bIsUsedWithLidarPointCloud;
 	}
 
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	static void ModifyCompilationEnvironment(
+		const FMaterialShaderPermutationParameters& Parameters, 
+		FShaderCompilerEnvironment& OutEnvironment)
 	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 
-		const FPermutationDomain PermutationVector(Parameters.PermutationId);
-
+		// Thread group size (16x16 = 256 threads)
 		OutEnvironment.SetDefine(TEXT("THREADS_X"), 16);
 		OutEnvironment.SetDefine(TEXT("THREADS_Y"), 16);
 		OutEnvironment.SetDefine(TEXT("THREADS_Z"), 1);
-		OutEnvironment.SetDefine(TEXT("PlanetType"), PermutationVector.Get<FPlanetComputeShader::FPlanetComputeShader_Perm_TEST>());
 		
+		// Shader configuration
+		OutEnvironment.SetDefine(TEXT("PLANET_COMPUTE_SHADER_COMPILE"), 1);
+		OutEnvironment.SetDefine(TEXT("NUM_MATERIAL_TEXCOORDS"), 4);
+		OutEnvironment.SetDefine(TEXT("NUM_TEX_COORD_INTERPOLATORS"), 4);
 	}
-private:
 };
 
-// This will tell the engine to create the shader and where the shader entry point is.
-//                            ShaderType                            ShaderPath                     Shader function name    Type
-IMPLEMENT_GLOBAL_SHADER(FPlanetComputeShader, "/ComputeShaderShaders/Planet.usf", "PlanetComputeShader", SF_Compute);
+IMPLEMENT_MATERIAL_SHADER_TYPE(, FPlanetComputeShader, TEXT("/ComputeShaderShaders/Planet.usf"), TEXT("PlanetComputeShader"), SF_Compute);
 
-FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread(FRHICommandListImmediate& RHICmdList, FPlanetComputeShaderDispatchParams Params) {
-	typename FPlanetComputeShader::FPermutationDomain PermutationVector;
-	PermutationVector.Set<FPlanetComputeShader::FPlanetComputeShader_Perm_TEST>(Params.PlanetType);
-
-	TShaderMapRef<FPlanetComputeShader> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
-
+//------------------------------------------------------------------------------
+// Dispatch Implementation
+//------------------------------------------------------------------------------
+FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread(
+	FRHICommandListImmediate& RHICmdList, 
+	FPlanetComputeShaderDispatchParams Params)
+{
 	FPlanetComputeShaderReadback Readback;
 
-	if (ComputeShader.IsValid())
+	FRDGBuilder GraphBuilder(RHICmdList);
 	{
-		FRDGBuilder GraphBuilder(RHICmdList);
+		SCOPE_CYCLE_COUNTER(STAT_PlanetComputeShader_Execute);
+		DECLARE_GPU_STAT(PlanetComputeShader);
+		RDG_EVENT_SCOPE(GraphBuilder, "PlanetComputeShader");
+		RDG_GPU_STAT_SCOPE(GraphBuilder, PlanetComputeShader);
+
+		//----------------------------------------------------------------------
+		// Validate Material
+		//----------------------------------------------------------------------
+		const FMaterialRenderProxy* MaterialProxy = Params.MaterialRenderProxy;
+		if (!MaterialProxy)
 		{
-			SCOPE_CYCLE_COUNTER(STAT_PlanetComputeShader_Execute);
-			DECLARE_GPU_STAT(PlanetComputeShader);
-			RDG_EVENT_SCOPE(GraphBuilder, "PlanetComputeShader");
-			RDG_GPU_STAT_SCOPE(GraphBuilder, PlanetComputeShader);
-
-			FPlanetComputeShader::FParameters* PassParameters = GraphBuilder.AllocParameters<FPlanetComputeShader::FParameters>();
-			
-			FRDGTextureRef RenderTargetRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.BiomeMap->GetResource()->TextureRHI, TEXT("BiomeMap")));
-			PassParameters->BiomeMap = GraphBuilder.CreateUAV(RenderTargetRDG);
-
-			FRDGTextureRef CurveAtlas = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.CurveAtlas->GetResource()->TextureRHI, TEXT("CurveAtlas")));
-			PassParameters->CurveAtlas = GraphBuilder.CreateSRV(CurveAtlas);
-			//PassParameters->LQRenderTarget = GraphBuilder.CreateUAV(LQRenderTargetRDG);
-
-			FRDGTextureRef BiomeDataTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Params.BiomeDataTexture->GetResource()->TextureRHI, TEXT("BiomeDataTexture")));
-			PassParameters->BiomeDataTexture = GraphBuilder.CreateSRV(BiomeDataTexture);
-
-			PassParameters->biomeCount = Params.BiomeCount;
-			PassParameters->chunkQuality = Params.ChunkQuality;
-			PassParameters->chunkLocation = Params.ChunkLocation;
-			PassParameters->chunkRotation = Params.ChunkRotation;
-			PassParameters->chunkOriginLocation = Params.ChunkOriginLocation;
-			PassParameters->chunkSize = Params.ChunkSize;
-			PassParameters->planetRadius = Params.PlanetRadius;
-			PassParameters->noiseHeight = Params.NoiseHeight;
-			
-			int32 NumVertices = Params.X * Params.Y;
-			int32 NumDataPoints = NumVertices * 3;
-			Readback.NumDataPoints = NumDataPoints;
-
-			FRDGBufferRef OutputBuffer = GraphBuilder.CreateBuffer(
-				FRDGBufferDesc::CreateBufferDesc(sizeof(float), NumDataPoints),
-				TEXT("OutputBuffer"));
-
-			PassParameters->Output = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBuffer, PF_R32_FLOAT));
-
-			FRDGBufferRef OutputBufferVC = GraphBuilder.CreateBuffer(
-			FRDGBufferDesc::CreateBufferDesc(sizeof(uint8), NumDataPoints),
-			TEXT("OutputBufferVC"));
-
-			PassParameters->OutputVC = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBufferVC, PF_R8_UINT));
-			
-			// Group count optimization
-			auto GroupCount = FComputeShaderUtils::GetGroupCount(FIntPoint(Params.X, Params.Y), FIntPoint(16, 16));
-			GraphBuilder.AddPass(
-				RDG_EVENT_NAME("ExecutePlanetComputeShader"),
-				PassParameters,
-				ERDGPassFlags::AsyncCompute,
-				[&PassParameters, ComputeShader, GroupCount](FRHIComputeCommandList& RHICmdList)
-			{
-				FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, *PassParameters, GroupCount);
-			});
-
-			
-			Readback.OutputBuffer = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutput"));
-			AddEnqueueCopyPass(GraphBuilder, Readback.OutputBuffer.Get(), OutputBuffer, 0u);
-			
-			Readback.OutputVCBuffer = MakeShared<FRHIGPUBufferReadback>(TEXT("ExecutePlanetComputeShaderOutputVC"));
-			AddEnqueueCopyPass(GraphBuilder, Readback.OutputVCBuffer.Get(), OutputBufferVC, 0u);
-			
+			UE_LOG(LogTemp, Error, TEXT("PlanetComputeShader: No material proxy provided"));
+			return Readback;
 		}
-		GraphBuilder.Execute();
-	}
-	else
-	{
-		#if WITH_EDITOR
-			GEngine->AddOnScreenDebugMessage((uint64)42145125184, 6.f, FColor::Red, FString(TEXT("The compute shader has a problem.")));
-		#endif
-	}
+		
+		const FMaterial* Material = MaterialProxy->GetMaterialNoFallback(GMaxRHIFeatureLevel);
+		if (!Material || !Material->GetRenderingThreadShaderMap())
+		{
+			UE_LOG(LogTemp, Error, TEXT("PlanetComputeShader: Material not ready or shader not compiled. Ensure 'Used with Lidar Point Cloud' is enabled on the Generation Material."));
+			return Readback;
+		}
 
+		//----------------------------------------------------------------------
+		// Get Shader
+		//----------------------------------------------------------------------
+		// FLocalVertexFactory used as dummy since we don't have a real mesh
+		TShaderRef<FPlanetComputeShader> ComputeShader = Material->GetShader<FPlanetComputeShader>(
+			&FLocalVertexFactory::StaticType, 
+			false
+		);
+
+		if (!ComputeShader.IsValid())
+		{
+			UE_LOG(LogTemp, Error, TEXT("PlanetComputeShader: Shader not found. Ensure 'Used with Lidar Point Cloud' is enabled on the Generation Material and recompile shaders."));
+			return Readback;
+		}
+
+		//----------------------------------------------------------------------
+		// Setup Parameters
+		//----------------------------------------------------------------------
+		FPlanetComputeShader::FParameters* PassParams = GraphBuilder.AllocParameters<FPlanetComputeShader::FParameters>();
+		
+		// Register textures
+		FRDGTextureRef BiomeMapRDG = GraphBuilder.RegisterExternalTexture(
+			CreateRenderTarget(Params.BiomeMap->GetResource()->TextureRHI, TEXT("BiomeMap")));
+		PassParams->BiomeMap = GraphBuilder.CreateUAV(BiomeMapRDG);
+
+		FRDGTextureRef CurveAtlasRDG = GraphBuilder.RegisterExternalTexture(
+			CreateRenderTarget(Params.CurveAtlas->GetResource()->TextureRHI, TEXT("CurveAtlas")));
+		PassParams->CurveAtlas = GraphBuilder.CreateSRV(CurveAtlasRDG);
+
+		FRDGTextureRef BiomeDataRDG = GraphBuilder.RegisterExternalTexture(
+			CreateRenderTarget(Params.BiomeDataTexture->GetResource()->TextureRHI, TEXT("BiomeDataTexture")));
+		PassParams->BiomeDataTexture = GraphBuilder.CreateSRV(BiomeDataRDG);
+
+		// Chunk parameters
+		PassParams->chunkLocation = Params.ChunkLocation;
+		PassParams->chunkRotation = Params.ChunkRotation;
+		PassParams->chunkOriginLocation = Params.ChunkOriginLocation;
+		PassParams->chunkSize = Params.ChunkSize;
+		PassParams->planetRadius = Params.PlanetRadius;
+		PassParams->noiseHeight = Params.NoiseHeight;
+		PassParams->biomeCount = Params.BiomeCount;
+		PassParams->chunkQuality = Params.ChunkQuality;
+		
+		// Create minimal view uniform buffer (required for material evaluation)
+		FViewUniformShaderParameters ViewParams;
+		ViewParams.GameTime = 0.0f;
+		ViewParams.RealTime = 0.0f;
+		PassParams->View = TUniformBufferRef<FViewUniformShaderParameters>::CreateUniformBufferImmediate(
+			ViewParams, 
+			UniformBuffer_SingleFrame
+		);
+
+		//----------------------------------------------------------------------
+		// Create Output Buffers
+		//----------------------------------------------------------------------
+		const int32 NumVertices = Params.X * Params.Y;
+		Readback.NumVertices = NumVertices;
+
+		// Position buffer: 3 floats (x,y,z) per vertex
+		FRDGBufferRef OutputBuffer = GraphBuilder.CreateBuffer(
+			FRDGBufferDesc::CreateBufferDesc(sizeof(float), NumVertices * 3),
+			TEXT("PlanetOutputBuffer")
+		);
+		PassParams->Output = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputBuffer, PF_R32_FLOAT));
+
+		// Vertex color buffer: 4 bytes (RGBA) per vertex
+		FRDGBufferRef OutputVCBuffer = GraphBuilder.CreateBuffer(
+			FRDGBufferDesc::CreateBufferDesc(sizeof(uint8), NumVertices * 4),
+			TEXT("PlanetOutputVCBuffer")
+		);
+		PassParams->OutputVC = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(OutputVCBuffer, PF_R8_UINT));
+		
+		//----------------------------------------------------------------------
+		// Dispatch Compute Shader
+		//----------------------------------------------------------------------
+		const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(
+			FIntPoint(Params.X, Params.Y), 
+			FIntPoint(16, 16)
+		);
+		
+		GraphBuilder.AddPass(
+			RDG_EVENT_NAME("PlanetComputeShader"),
+			PassParams,
+			ERDGPassFlags::AsyncCompute,
+			[PassParams, ComputeShader, MaterialProxy, Material, GroupCount](FRHIComputeCommandList& RHICmdList)
+			{
+				MaterialProxy->UpdateUniformExpressionCacheIfNeeded(GMaxRHIFeatureLevel);
+
+				// Setup shader bindings
+				FMeshMaterialShaderElementData ShaderElementData;
+				FMeshProcessorShaders PassShaders;
+				PassShaders.ComputeShader = ComputeShader;
+
+				FMeshDrawShaderBindings ShaderBindings;
+				ShaderBindings.Initialize(PassShaders);
+
+				int32 DataOffset = 0;
+				FMeshDrawSingleShaderBindings SingleBindings = ShaderBindings.GetSingleShaderBindings(SF_Compute, DataOffset);
+				ComputeShader->GetShaderBindings(
+					nullptr,              // Scene
+					GMaxRHIFeatureLevel,  // FeatureLevel
+					nullptr,              // PrimitiveSceneProxy
+					*MaterialProxy,       // MaterialRenderProxy
+					*Material,            // Material
+					ShaderElementData,    // ElementData
+					SingleBindings        // ShaderBindings
+				);
+
+				ShaderBindings.Finalize(&PassShaders);
+				UE::MeshPassUtils::Dispatch(RHICmdList, ComputeShader, ShaderBindings, *PassParams, GroupCount);
+			}
+		);
+
+		//----------------------------------------------------------------------
+		// Setup Readback
+		//----------------------------------------------------------------------
+		Readback.OutputBuffer = MakeShared<FRHIGPUBufferReadback>(TEXT("PlanetOutputReadback"));
+		AddEnqueueCopyPass(GraphBuilder, Readback.OutputBuffer.Get(), OutputBuffer, 0u);
+		
+		Readback.OutputVCBuffer = MakeShared<FRHIGPUBufferReadback>(TEXT("PlanetOutputVCReadback"));
+		AddEnqueueCopyPass(GraphBuilder, Readback.OutputVCBuffer.Get(), OutputVCBuffer, 0u);
+	}
+	
+	GraphBuilder.Execute();
 	return Readback;
 }

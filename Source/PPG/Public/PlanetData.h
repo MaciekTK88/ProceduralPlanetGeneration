@@ -1,4 +1,5 @@
-// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
 
 #pragma once
 
@@ -6,7 +7,7 @@
 
 #include "Engine/DataAsset.h"
 #include "FoliageData.h"
-#include "Curves/CurveLinearColor.h"
+#include "Curves/CurveVector.h"
 #include "PlanetData.generated.h"
 
 /**
@@ -22,7 +23,7 @@ struct FBiomeData
 	TArray<int32> BiomeMaskIndices;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Biome|Terrain")
-	TObjectPtr<UCurveLinearColor> TerrainCurve;
+	TObjectPtr<UCurveVector> TerrainCurve;
 
 	// Hidden - computed from TerrainCurve at runtime
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Biome|Terrain")
@@ -55,11 +56,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Biomes")
 	TArray<FBiomeData> BiomeData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|General")
-	int32 PlanetType = 0;
-
-
-
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Dimensions")
 	float NoiseHeight = 400000.0f;
 
@@ -74,6 +70,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Rendering")
 	TObjectPtr<UMaterialInterface> PlanetMaterial;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Generation")
+	TObjectPtr<UMaterialInterface> GenerationMaterial;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Planet|Water")
 	bool bGenerateWater = false;

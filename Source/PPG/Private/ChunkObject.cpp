@@ -1,4 +1,5 @@
-// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
 
 #include "ChunkObject.h"
 #include "Engine/GameEngine.h"
@@ -14,6 +15,7 @@
 #include "VoxelChaosTriangleMeshCooker.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "StaticMeshResources.h"
+#include "Materials/Material.h"
 #include "ComputeShader/Public/PlanetComputeShader/PlanetComputeShader.h"
 
 
@@ -166,21 +168,26 @@ void UChunkObject::GenerateChunk()
 {
 	ChunkStatus = EChunkStatus::GENERATING;
 
-	// Init Stats
+	// Initialize chunk metrics
 	VerticesCount = ChunkQuality + 1;
 	TriangleSize = ChunkSize / ChunkQuality;
 
+	// Enable raytracing proxy for high-detail chunks
 	if (bGenerateRayTracingProxy && RecursionLevel >= PlanetData->MaxRecursionLevel - 1)
 	{
 		bRayTracing = true;
 	}
+	
+	// Enable collisions based on recursion depth
 	if (bGenerateCollisions && RecursionLevel >= PlanetData->MaxRecursionLevel - CollisionDisableDistance)
 	{
 		bCollisions = true;
 	}
 
-	
-	// Init BiomeMap
+	//--------------------------------------------------------------------------
+	// Create BiomeMap Render Target
+	// Layout: Top half = Material indices + elevation, Bottom half = Strengths
+	//--------------------------------------------------------------------------
 	BiomeMap = NewObject<UTextureRenderTarget2D>(this, NAME_None, RF_Transient);
 	BiomeMap->bCanCreateUAV = true;
 	BiomeMap->bSupportsUAV = true;
@@ -191,11 +198,11 @@ void UChunkObject::GenerateChunk()
 	BiomeMap->Filter = TF_Nearest;
 	BiomeMap->AddressX = TA_Clamp;
 	BiomeMap->AddressY = TA_Clamp;
-	//RenderTarget->ClearColor = FLinearColor::Black; // Optional: Set default clear color
-	BiomeMap->UpdateResourceImmediate(); // Must be called after setting UAV flags
+	BiomeMap->UpdateResourceImmediate();
 
-	
-	// Compute Params
+	//--------------------------------------------------------------------------
+	// Setup Compute Shader Parameters
+	//--------------------------------------------------------------------------
 	FPlanetComputeShaderDispatchParams Params(VerticesCount, VerticesCount, 1);
 	Params.ChunkLocation = FVector3f(PlanetSpaceLocation);
 	Params.ChunkRotation = PlanetSpaceRotation;
@@ -211,11 +218,18 @@ void UChunkObject::GenerateChunk()
 	Params.X = VerticesCount;
 	Params.Y = VerticesCount;
 	Params.Z = 1;
-	Params.PlanetType = PlanetType;
 
-	Vertices.Reserve(VerticesCount * VerticesCount);
-	UVs.Reserve(VerticesCount * VerticesCount);
-	VertexColors.Reserve(VerticesCount * VerticesCount);
+	// Use generation material or fallback to default
+	Params.GenerationMaterial = PlanetData->GenerationMaterial 
+		? PlanetData->GenerationMaterial 
+		: UMaterial::GetDefaultMaterial(MD_Surface);
+	Params.MaterialRenderProxy = Params.GenerationMaterial->GetRenderProxy();
+
+	// Pre-allocate vertex buffers
+	const int32 TotalVertices = VerticesCount * VerticesCount;
+	Vertices.Reserve(TotalVertices);
+	UVs.Reserve(TotalVertices);
+	VertexColors.Reserve(TotalVertices);
 	VertexHeight.Reserve(VerticesCount * VerticesCount);
 	Slopes.Reserve(VerticesCount * VerticesCount);
 	ForestStrength.Reserve(VerticesCount * VerticesCount);
@@ -224,7 +238,7 @@ void UChunkObject::GenerateChunk()
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](FPlanetComputeShaderReadback Readback)
 	{
 		// Validate the readback has valid data before proceeding
-		if (Readback.NumDataPoints > 0 && Readback.OutputBuffer.IsValid() && Readback.OutputVCBuffer.IsValid())
+		if (Readback.NumVertices > 0 && Readback.OutputBuffer.IsValid() && Readback.OutputVCBuffer.IsValid())
 		{
 			GPUReadback = Readback;
 			ChunkStatus = EChunkStatus::WAITING_FOR_GPU;
@@ -232,8 +246,8 @@ void UChunkObject::GenerateChunk()
 		else
 		{
 			// GPU dispatch failed or returned empty data - abort this chunk
-			UE_LOG(LogTemp, Warning, TEXT("Chunk GPU dispatch returned invalid readback (NumDataPoints: %d, OutputBuffer: %s, OutputVCBuffer: %s). Aborting chunk."),
-				Readback.NumDataPoints,
+			UE_LOG(LogTemp, Warning, TEXT("Chunk GPU dispatch returned invalid readback (NumVertices: %d, OutputBuffer: %s, OutputVCBuffer: %s). Aborting chunk."),
+				Readback.NumVertices,
 				Readback.OutputBuffer.IsValid() ? TEXT("Valid") : TEXT("Invalid"),
 				Readback.OutputVCBuffer.IsValid() ? TEXT("Valid") : TEXT("Invalid"));
 			bAbortAsync = true;
@@ -267,10 +281,10 @@ void UChunkObject::TickGPUReadback()
 		ENQUEUE_RENDER_COMMAND(ReadChunkData)(
 			[this, Readback = GPUReadback](FRHICommandListImmediate& RHICmdList)
 			{
-				int32 NumDataPoints = Readback.NumDataPoints;
+				const int32 NumVertices = Readback.NumVertices;
 				
 				// Safety check: abort if no data to read
-				if (NumDataPoints <= 0)
+				if (NumVertices <= 0)
 				{
 					TWeakObjectPtr<UChunkObject> WeakThis(this);
 					AsyncTask(ENamedThreads::GameThread, [WeakThis]()
@@ -284,18 +298,20 @@ void UChunkObject::TickGPUReadback()
 					return;
 				}
 				
-				// Read main output
-				float* Buffer = (float*)Readback.OutputBuffer->Lock(NumDataPoints * sizeof(float));
+				// Read position buffer (3 floats per vertex: x, y, z)
+				const int32 NumPositionFloats = NumVertices * 3;
+				float* Buffer = (float*)Readback.OutputBuffer->Lock(NumPositionFloats * sizeof(float));
 				TArray<float> OutVal;
-				OutVal.SetNumUninitialized(NumDataPoints);
-				FMemory::Memcpy(OutVal.GetData(), Buffer, NumDataPoints * sizeof(float));
+				OutVal.SetNumUninitialized(NumPositionFloats);
+				FMemory::Memcpy(OutVal.GetData(), Buffer, NumPositionFloats * sizeof(float));
 				Readback.OutputBuffer->Unlock();
 
-				// Read vertex colors output
-				uint8* BufferVC = (uint8*)Readback.OutputVCBuffer->Lock(NumDataPoints * sizeof(uint8));
+				// Read vertex color buffer (4 bytes per vertex: RGBA)
+				const int32 NumColorBytes = NumVertices * 4;
+				uint8* BufferVC = (uint8*)Readback.OutputVCBuffer->Lock(NumColorBytes * sizeof(uint8));
 				TArray<uint8> OutValVC;
-				OutValVC.SetNumUninitialized(NumDataPoints);
-				FMemory::Memcpy(OutValVC.GetData(), BufferVC, NumDataPoints * sizeof(uint8));
+				OutValVC.SetNumUninitialized(NumColorBytes);
+				FMemory::Memcpy(OutValVC.GetData(), BufferVC, NumColorBytes * sizeof(uint8));
 				Readback.OutputVCBuffer->Unlock();
 
 				TWeakObjectPtr<UChunkObject> WeakThis(this);
@@ -330,11 +346,11 @@ void UChunkObject::SetSharedResources(TArray<TObjectPtr<UStaticMeshComponent>>* 
 	Triangles = InTriangles;
 }
 
-void UChunkObject::InitializeChunk(float InChunkSize, int32 InRecursionLevel, int32 InPlanetType, FVector InChunkLocation, FVector InChunkOriginLocation, FIntVector InPlanetSpaceRotation, float InChunkMaxHeight, uint8 InMaterialLayersNum, UStaticMesh* InCloseWaterMesh, UStaticMesh* InFarWaterMesh)
+void UChunkObject::InitializeChunk(int InChunkQuality, float InChunkSize, int32 InRecursionLevel, FVector InChunkLocation, FVector InChunkOriginLocation, FIntVector InPlanetSpaceRotation, float InChunkMaxHeight, uint8 InMaterialLayersNum, UStaticMesh* InCloseWaterMesh, UStaticMesh* InFarWaterMesh)
 {
+	ChunkQuality = InChunkQuality;
 	ChunkSize = InChunkSize;
 	RecursionLevel = InRecursionLevel;
-	PlanetType = InPlanetType;
 	ChunkOriginLocation = InChunkOriginLocation;
 	PlanetSpaceLocation = InChunkLocation;
 	PlanetSpaceRotation = InPlanetSpaceRotation;
@@ -361,7 +377,7 @@ void UChunkObject::ProcessChunkData(const TArray<float>& OutputVal, const TArray
 		{
 			FVector3f Vertex = FVector3f(OutputVal[(x + y * VerticesCount) * 3], OutputVal[(x + y * VerticesCount) * 3 + 1], OutputVal[(x + y * VerticesCount) * 3 + 2]);
 			Vertices.Add(Vertex);
-
+			
 			UVs.Add(FVector2f((float)x / (float)VerticesCount, (float)y / (float)VerticesCount));
 
 			float Noise = ((FVector(Vertices[x + y * VerticesCount]) + ChunkOriginLocation).Size() - PlanetData->PlanetRadius) / PlanetData->NoiseHeight;
@@ -376,34 +392,24 @@ void UChunkObject::ProcessChunkData(const TArray<float>& OutputVal, const TArray
 			{
 				ChunkMinHeight = NoiseHeight;
 			}
-
-			uint8 Erosion = OutputVCVal[(x + y * VerticesCount) * 3];
-			uint8 ShaderForestNoise = OutputVCVal[(x + y * VerticesCount) * 3 + 1];
-			uint8 BiomeIndex = OutputVCVal[(x + y * VerticesCount) * 3 + 2];
 			
+			uint8 ShaderForestNoise = OutputVCVal[(x + y * VerticesCount) * 4 + 1];
+			
+			// 4th component (Alpha) is BiomeIndex
+			uint8 BiomeIndex = OutputVCVal[(x + y * VerticesCount) * 4 + 3];
 
-			if (PlanetData->BiomeData[BiomeIndex].bGenerateForest == true && PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
-			{
-				float VertexRandom = HashFVectorToVector2D(FVector(Vertex) + ChunkOriginLocation, 0, 255, TriangleSize * 2.0f).X;
-				//float VertexRandom = (FMath::PerlinNoise3D((FVector(Vertex) + ChunkLocation) * 0.001f) + 1) / 2.0f * 255.0f;
-				if ((ShaderForestNoise <= VertexRandom || NoiseHeight > PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MaxHeight || NoiseHeight < PlanetData->BiomeData[BiomeIndex].ForestFoliageData->FoliageList[0].MinHeight) && PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr)
-				{
-					//ShaderForestNoise = 0;
-				}
-			}
-			else
-			{
-				ShaderForestNoise = 0;
+			if (PlanetData->BiomeData.Num() - 1 < BiomeIndex) {
+				BiomeIndex = 0; // Safety clamp
 			}
 			
-			VertexColors.Add(FColor(Erosion, ShaderForestNoise, BiomeIndex, 0));
+			VertexColors.Add(FColor(OutputVCVal[(x + y * VerticesCount) * 4], ShaderForestNoise, OutputVCVal[(x + y * VerticesCount) * 4 + 2], BiomeIndex));
 			Slopes.Add(0); // Calculated later
 			VertexHeight.Add(NoiseHeight);
 			if (PlanetData->BiomeData[BiomeIndex].FoliageData != nullptr || PlanetData->BiomeData[BiomeIndex].ForestFoliageData != nullptr)
 			{
 				FoliageBiomeIndices.Add(BiomeIndex);
 			}
-			ForestStrength.Add(OutputVCVal[(x + y * VerticesCount) * 3 + 1]);
+			ForestStrength.Add(ShaderForestNoise);
 			Biomes.Add(BiomeIndex);
 
 		}
@@ -912,7 +918,12 @@ void UChunkObject::AssignComponents()
 		ChunkSMC->ResetSceneVelocity();
 	}
 	
+	//--------------------------------------------------------------------------
+	// Setup Dynamic Material Instance
+	//--------------------------------------------------------------------------
 	TObjectPtr<UMaterialInstanceDynamic> MaterialInst = ChunkSMC->CreateDynamicMaterialInstance(0, PlanetData->PlanetMaterial);
+	
+	// Global material parameters
 	MaterialInst->SetTextureParameterValue("BiomeMap", BiomeMap);
 	MaterialInst->SetTextureParameterValue("BiomeData", PlanetData->GPUBiomeData);
 	MaterialInst->SetScalarParameterValue("recursionLevel", PlanetData->MaxRecursionLevel - RecursionLevel);
@@ -921,60 +932,74 @@ void UChunkObject::AssignComponents()
 	MaterialInst->SetScalarParameterValue("ChunkSize", ChunkSize);
 	MaterialInst->SetVectorParameterValue("ComponentLocation", ChunkOriginLocation);
 	
-	
-	for (int i = 0; i < MaterialLayersNum; i++)
+	//--------------------------------------------------------------------------
+	// Setup Material Layer Parameters
+	// MaterialLayersNum = total layers in stack (Background + N overlay layers)
+	// Blend parameters: indices 0 to (MaterialLayersNum-2), for layers 1+
+	// Layer parameters: indices 0 to (MaterialLayersNum-1), for all layers
+	//--------------------------------------------------------------------------
+	for (int32 LayerIdx = 0; LayerIdx < MaterialLayersNum; LayerIdx++)
 	{
-		FMaterialParameterInfo LayerInfo;
-		LayerInfo.Name = "LayerIndex";
-		LayerInfo.Association = EMaterialParameterAssociation::BlendParameter;
-		LayerInfo.Index = FMath::Max(i - 1,0);
-		MaterialInst->SetScalarParameterValueByInfo(LayerInfo, i + 0.01f);
+		// Blend parameters (only for overlay layers, not background)
+		if (LayerIdx > 0)
+		{
+			const int32 BlendIdx = LayerIdx - 1;
+			
+			FMaterialParameterInfo LayerIndexInfo;
+			LayerIndexInfo.Name = "LayerIndex";
+			LayerIndexInfo.Association = EMaterialParameterAssociation::BlendParameter;
+			LayerIndexInfo.Index = BlendIdx;
+			MaterialInst->SetScalarParameterValueByInfo(LayerIndexInfo, float(LayerIdx) + 0.01f);
 
-		FMaterialParameterInfo BiomeCountInfo;
-		BiomeCountInfo.Name = "BiomeCount";
-		BiomeCountInfo.Association = EMaterialParameterAssociation::BlendParameter;
-		BiomeCountInfo.Index = FMath::Max(i - 1,0);
-		MaterialInst->SetScalarParameterValueByInfo(BiomeCountInfo, float(MaterialLayersNum) + 0.01f);
+			FMaterialParameterInfo BiomeCountInfo;
+			BiomeCountInfo.Name = "BiomeCount";
+			BiomeCountInfo.Association = EMaterialParameterAssociation::BlendParameter;
+			BiomeCountInfo.Index = BlendIdx;
+			MaterialInst->SetScalarParameterValueByInfo(BiomeCountInfo, float(MaterialLayersNum) + 0.01f);
 
-		FMaterialParameterInfo BlendInfo;
-		BlendInfo.Name = "BiomeMap";
-		BlendInfo.Association = EMaterialParameterAssociation::BlendParameter;
-		BlendInfo.Index = FMath::Max(i - 1,0);
-		MaterialInst->SetTextureParameterValueByInfo(BlendInfo, BiomeMap);
+			FMaterialParameterInfo BlendMapInfo;
+			BlendMapInfo.Name = "BiomeMap";
+			BlendMapInfo.Association = EMaterialParameterAssociation::BlendParameter;
+			BlendMapInfo.Index = BlendIdx;
+			MaterialInst->SetTextureParameterValueByInfo(BlendMapInfo, BiomeMap);
+		}
 
-		FMaterialParameterInfo PlanetRadiusInfo;
-		PlanetRadiusInfo.Name = "PlanetRadius";
-		PlanetRadiusInfo.Association = EMaterialParameterAssociation::LayerParameter;
-		PlanetRadiusInfo.Index = i;
-		MaterialInst->SetScalarParameterValueByInfo(PlanetRadiusInfo, PlanetData->PlanetRadius);
+		// Per-layer parameters (all layers including background)
+		FMaterialParameterInfo RadiusInfo;
+		RadiusInfo.Name = "PlanetRadius";
+		RadiusInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		RadiusInfo.Index = LayerIdx;
+		MaterialInst->SetScalarParameterValueByInfo(RadiusInfo, PlanetData->PlanetRadius);
 
-		FMaterialParameterInfo NoiseHeightInfo;
-		NoiseHeightInfo.Name = "NoiseHeight";
-		NoiseHeightInfo.Association = EMaterialParameterAssociation::LayerParameter;
-		NoiseHeightInfo.Index = i;
-		MaterialInst->SetScalarParameterValueByInfo(NoiseHeightInfo, PlanetData->NoiseHeight);
+		FMaterialParameterInfo HeightInfo;
+		HeightInfo.Name = "NoiseHeight";
+		HeightInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		HeightInfo.Index = LayerIdx;
+		MaterialInst->SetScalarParameterValueByInfo(HeightInfo, PlanetData->NoiseHeight);
 
-		FMaterialParameterInfo ChunkSizeInfo;
-		ChunkSizeInfo.Name = "ChunkSize";
-		ChunkSizeInfo.Association = EMaterialParameterAssociation::LayerParameter;
-		ChunkSizeInfo.Index = i;
-		MaterialInst->SetScalarParameterValueByInfo(ChunkSizeInfo, ChunkSize);
+		FMaterialParameterInfo SizeInfo;
+		SizeInfo.Name = "ChunkSize";
+		SizeInfo.Association = EMaterialParameterAssociation::LayerParameter;
+		SizeInfo.Index = LayerIdx;
+		MaterialInst->SetScalarParameterValueByInfo(SizeInfo, ChunkSize);
 
 		FMaterialParameterInfo LocationInfo;
 		LocationInfo.Name = "ComponentLocation";
 		LocationInfo.Association = EMaterialParameterAssociation::LayerParameter;
-		LocationInfo.Index = i;
+		LocationInfo.Index = LayerIdx;
 		MaterialInst->SetVectorParameterValueByInfo(LocationInfo, ChunkOriginLocation);
 
 		FMaterialParameterInfo RecursionInfo;
 		RecursionInfo.Name = "recursionLevel";
 		RecursionInfo.Association = EMaterialParameterAssociation::LayerParameter;
-		RecursionInfo.Index = i;
+		RecursionInfo.Index = LayerIdx;
 		MaterialInst->SetScalarParameterValueByInfo(RecursionInfo, PlanetData->MaxRecursionLevel - RecursionLevel);
 	}
 	MaterialInst = nullptr;
 	
-
+	//--------------------------------------------------------------------------
+	// Upload Foliage Data
+	//--------------------------------------------------------------------------
 	if (bGenerateFoliage)
 	{
 		UploadFoliageData();

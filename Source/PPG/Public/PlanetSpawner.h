@@ -1,4 +1,5 @@
-// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
 
 #pragma once
 
@@ -31,6 +32,9 @@ struct FChunkTree
 	// Height of the highest vertex in this chunk
 	float MaxChunkHeight = 0;
 
+	// Frame counter for delaying generation start (higher recursion = more delay)
+	int32 PendingFrames = 0;
+
 	void GenerateChunks(int RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* Planet, FChunkTree* ParentMesh);
 	
 	// Traverse the tree and find chunks with non-empty ChunkObject
@@ -59,6 +63,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	void BuildPlanet();
 
+	/** Precomputes all chunk data including GPU textures and triangle indices */
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	void PrecomputeChunkData();
 
@@ -72,19 +77,23 @@ public:
 	void ClearComponents();
 	
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
-	void RegeneratePlanet(bool bRecompileShaders);
+	void RegeneratePlanet();
 	
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	float GetCurrentFOV();
+
+private:
+	/** Generates CurveAtlas texture from unique TerrainCurve assets */
+	void GenerateCurveAtlas();
+	
+	/** Generates GPUBiomeData texture containing per-biome configuration */
+	void GenerateGPUBiomeData();
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual bool ShouldTickIfViewportsOnly() const override;
 	virtual void OnConstruction(const FTransform& Transform) override;
-	
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "Planet|Spawning")
-	void ApplyShaderChanges();
 
 
 #if WITH_EDITOR
@@ -93,10 +102,12 @@ protected:
 	void OnPreBeginPIE(const bool bIsSimulating);
 	void OnEndPIE(const bool bIsSimulating);
 	void OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event);
+	void OnMaterialCompilationFinished(UMaterialInterface* Material);
 	
 	FDelegateHandle PreBeginPIEDelegateHandle;
 	FDelegateHandle EndPIEDelegateHandle;
 	FDelegateHandle OnObjectPropertyChangedDelegateHandle;
+	FDelegateHandle OnMaterialCompilationFinishedDelegateHandle;
 #endif
 
 public:

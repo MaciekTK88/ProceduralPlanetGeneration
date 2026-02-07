@@ -66,7 +66,7 @@ float3 grad(float3 p) {
     return normalize(r * 2.0 - 1.0);
 }
 
-// Improved hash for gradients (from IQ / widely used)
+// Hash for gradients
 float3 hash_grad(float3 p) {
 	p = float3( dot(p,float3(127.1,311.7, 74.7)),
 			    dot(p,float3(269.5,183.3,246.1)),
@@ -129,10 +129,6 @@ float4 noised(float3 x)
 
 //------------------------------------------------------------------------------
 // fbmE: Fractal Brownian Motion with derivatives.
-// Now using Gradient Noise and Domain Rotation to fix grid artifacts.
-//------------------------------------------------------------------------------
-// fbmE: Fractal Brownian Motion with derivatives.
-// Now using Gradient Noise and Domain Rotation to fix grid artifacts.
 float fbmE(float3 x, int octaves, float ridgePower)
 {
     float initAmplitude = 0.7;
@@ -178,7 +174,7 @@ float fbmE(float3 x, int octaves, float ridgePower)
         accumRot = mul(rot, accumRot);
     }
 
-    return total;
+    return total * 0.85;
 }
 
 
@@ -216,6 +212,7 @@ float3 noised2D(float2 p)
 }
 
 //------------------------------------------------------------------------------
+// Based on https://www.shadertoy.com/view/MtGcWh
 float3 erosion2d(float2 p, float2 dir)
 {
     float3 sum = float3(0.0, 0.0, 0.0);
@@ -226,56 +223,97 @@ float3 erosion2d(float2 p, float2 dir)
     float2 fp = frac(p);
     
     for (int i = -2; i <= 1; i++)
-    for (int j = -2; j <= 1; j++)
-    {
-        float2 o = float2(i,j);
-        //float2 h = hash2d(ip - o) * 0.5;
-        float2 h = float2(Hash3D(float3(ip - o, 0.0)),
-                          Hash3D(float3(ip - o + float2(1.0, 10.0), 0.0))) * 0.5;
-        float2 pp = fp + o - h;
-        float  d  = dot(pp, pp);
-        float  w  = exp(-d*2.0);
-        wtot += w;
-        float  m  = dot(pp, dir);
-        sum += float3(cos(m*F), -sin(m*F)*(pp + dir)) * w;
-    }
-    return sum / wtot;
+        for (int j = -2; j <= 1; j++)
+        {
+            float2 o = float2(i, j);
+
+            float2 h = float2(
+                Hash3D(float3(ip - o, 0.0)),
+                Hash3D(float3(ip - o + float2(1.0, 10.0), 0.0))
+            ) * 0.5;
+
+            float2 pp = fp + o - h;
+            float  d  = dot(pp, pp);
+            float  w  = exp(-d * 2.0);
+
+            wtot += w;
+
+            float m = dot(pp, dir);
+
+            sum += float3(
+                cos(m * F),
+                -sin(m * F) * (pp + dir)
+            ) * w;
+        }
+
+    return sum / max(wtot, 1e-5);
 }
+
 
 float mountain2d(float2 p, float scale, out float erosion)
 {
-    // base FBM
+    // --------------------------------------------------
+    // Base FBM
+    // --------------------------------------------------
     float3 n = float3(0.0, 0.0, 0.0);
-    float freq = 1.0, amp = 0.8;
+    float freq = 1.0;
+    float amp  = 0.8;
     
     for (int i = 0; i < 2; i++)
     {
         float3 d = noised2D(p * scale * freq);
         n += d * (amp * float3(1.0, freq, freq));
+
         amp  *= 0.5;
         freq *= 2.0;
     }
-    
-    // slope‐direction
-    float2 dir = n.zy * float2(1.0,-1.0);
-    
-    // erosion layers
-    float3 hsum = float3(0.0, 0.0, 0.0); 
-    float  a    = 1.0;// * smoothstep(0.3, 0.5, n.x*0.5 + 0.5);
+
+    // Base height in [0,1]
+    float baseHeight = smoothstep(-1.0, 1.0, n.x);
+
+    // --------------------------------------------------
+    // Slope direction
+    // --------------------------------------------------
+    float2 dir = n.zy * float2(1.0, -1.0);
+    float slope = saturate(length(dir));
+
+    // --------------------------------------------------
+    // Erosion masks
+    // --------------------------------------------------
+
+    // Protect peaks
+    float peakMask = 1.0 - smoothstep(0.85, 1, baseHeight);
+
+    float erosionMask = peakMask;
+
+    // --------------------------------------------------
+    // Erosion layers
+    // --------------------------------------------------
+    float3 hsum = float3(0.0, 0.0, 0.0);
+    float  a    = 1.0;
     float  f    = 1.0;
-    
+
     for (int i = 0; i < 8; i++)
     {
-        float3 e = erosion2d(p * f * scale * 3, dir + hsum.zy * float2(1.0,-1.0));
-        hsum += e * (a * float3(1.0, f, f));
-        a   *= 0.4;
-        f   *= 2.0;
+        float3 e = erosion2d(
+            p * f * scale * 3.0,
+            dir + hsum.zy * float2(1.0, -1.0)
+        );
+
+        hsum += e * (a * erosionMask * float3(1.0, f, f));
+
+        a *= 0.4;
+        f *= 2.0;
     }
-    // smooth out erosion
+
+    // --------------------------------------------------
+    // Final erosion & height
+    // --------------------------------------------------
     hsum.x = smoothstep(-1.0, 1.0, hsum.x);
     erosion = hsum.x;
 
-    float height = smoothstep(-1.0, 1.0, n.x) + hsum.x * 0.1;
+    float height = baseHeight + hsum.x * 0.1;
+
     return height;
 }
 
@@ -283,21 +321,22 @@ float mountain2d(float2 p, float scale, out float erosion)
 float ErosionHeightTriplanar(float3 N, float scale, out float erosion)
 {
     float3 w = abs(N);
-    w /= (w.x + w.y + w.z);
+    w /= (w.x + w.y + w.z + 1e-5);
 
     float erosionx = 0.0;
     float erosiony = 0.0;
     float erosionz = 0.0;
     
-    // sample each plane
     float hx = mountain2d(N.yz, scale, erosionx);
     float hy = mountain2d(N.zx, scale, erosiony);
     float hz = mountain2d(N.xy, scale, erosionz);
 
-    erosion = ((erosionx * w.x + erosiony * w.y + erosionz * w.z));
-    
-    // triplanar blend
-    return hx*w.x + hy*w.y + hz*w.z;
+    erosion =
+        erosionx * w.x +
+        erosiony * w.y +
+        erosionz * w.z;
+
+    return (hx * w.x + hy * w.y + hz * w.z) * 0.92;
 }
 
 
@@ -391,7 +430,7 @@ float computeInstantPlateEffect(float3 pos, float plateSizeFactor)
     float dispersion = dev / totalW;
     float effect = (dispersion - 0.5) * 3.0 * 0.04;
 
-    return effect;
+    return effect * 10.0;
 }
 
 

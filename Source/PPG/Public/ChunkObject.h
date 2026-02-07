@@ -1,4 +1,5 @@
-// Copyright (c) 2025 Maciej Tkaczewski. MIT License.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maciej Tkaczewski
 
 #pragma once
 
@@ -118,7 +119,7 @@ public:
 	void SelfDestruct();
 
 	void SetSharedResources(TArray<TObjectPtr<UStaticMeshComponent>>* InChunkSMCPool, TArray<TObjectPtr<UInstancedStaticMeshComponent>>* InFoliageISMCPool, TArray<TObjectPtr<UStaticMeshComponent>>* InWaterSMCPool, TArray<uint32>* InTriangles);
-	void InitializeChunk(float InChunkWorldSize, int32 InRecursionLevel, int32 InPlanetType, FVector InChunkLocation, FVector InPlanetSpaceLocation, FIntVector InPlanetSpaceRotation, float InChunkMaxHeight, uint8 InMaterialLayersNum, UStaticMesh* InCloseWaterMesh, UStaticMesh* InFarWaterMesh);
+	void InitializeChunk(int InChunkQuality, float InChunkWorldSize, int32 InRecursionLevel, FVector InChunkLocation, FVector InPlanetSpaceLocation, FIntVector InPlanetSpaceRotation, float InChunkMaxHeight, uint8 InMaterialLayersNum, UStaticMesh* InCloseWaterMesh, UStaticMesh* InFarWaterMesh);
 
 	void SetAbortAsync(bool bInAbortAsync) { bAbortAsync = bInAbortAsync; }
 	bool GetAbortAsync() const { return bAbortAsync; }
@@ -136,9 +137,6 @@ protected:
 
 	UPROPERTY()
 	int32 RecursionLevel = 0;
-
-	UPROPERTY()
-	int32 PlanetType = 0;
 
 	UPROPERTY()
 	float ChunkMaxHeight = 0.0f;
