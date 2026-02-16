@@ -103,7 +103,7 @@ int32 UMaterialExpressionPlanetNoise::Compile(FMaterialCompiler* Compiler, int32
 		Code += TEXT("float3 Pos = float3(Parameters.TexCoords[0].x, Parameters.TexCoords[0].y, Parameters.TexCoords[1].x);\n");
 	}
 
-	Code += TEXT("float3 SeedOffset = float3(Seed * 17.31, Seed * 43.27, Seed * 89.13);\n");
+	Code += TEXT("float3 SeedOffset = frac(float3(Seed * 17.31, Seed * 43.27, Seed * 89.13));\n");
 	Code += FString::Printf(TEXT("float3 ScaledPos = Pos * %s + SeedOffset;\n"), *Freq);
 
 	switch (NoiseType)
@@ -137,7 +137,7 @@ int32 UMaterialExpressionPlanetNoise::Compile(FMaterialCompiler* Compiler, int32
 		Code += TEXT("float3 Pos = normalize(LWCToFloat(GetWorldPosition(Parameters)));\n");
 	}
 
-	Code += TEXT("float3 SeedOffset = float3(Seed * 17.31, Seed * 43.27, Seed * 89.13);\n");
+	Code += TEXT("float3 SeedOffset = frac(float3(Seed * 17.31, Seed * 43.27, Seed * 89.13));\n");
 	Code += FString::Printf(TEXT("float3 ScaledPos = Pos * %s + SeedOffset;\n"), *Freq);
 
 	switch (NoiseType)

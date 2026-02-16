@@ -792,7 +792,7 @@ void UChunkObject::UploadChunk()
 	TConstVoxelArrayView<int32> Indices(IntTriangles.GetData(), IntTriangles.Num());
 
 	FPlanetNaniteBuilder NaniteBuilder;
-	NaniteBuilder.PositionPrecision = -(FMath::Log2(ChunkSize / ChunkQuality / 32) - 1);
+	NaniteBuilder.PositionPrecision = FMath::CeilToInt(-log2(ChunkSize / (ChunkQuality * 128.0f)));
 	NaniteBuilder.Mesh.Indices = Indices;
 	NaniteBuilder.Mesh.Positions = Positions;
 	NaniteBuilder.bCompressVertices = true;

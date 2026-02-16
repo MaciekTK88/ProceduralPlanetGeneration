@@ -30,7 +30,7 @@ int32 UMaterialExpressionPlanetPosition::Compile(class FMaterialCompiler* Compil
 		"#if PLANET_COMPUTE_SHADER_COMPILE\n"
 		"    return float3(Parameters.TexCoords[0].x, Parameters.TexCoords[0].y, Parameters.TexCoords[1].x);\n"
 		"#else\n"
-		"    return LWCToFloat(GetWorldPosition(Parameters));\n"
+		"    return normalize(LWCToFloat(GetWorldPosition(Parameters)));\n"
 		"#endif"
 	);
 
