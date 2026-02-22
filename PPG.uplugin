@@ -16,23 +16,19 @@
 	"Installed": false,
 	"Modules": [
 		{
+			"Name": "VoxelCore",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
 			"Name": "PPG",
 			"Type": "Runtime",
-			"LoadingPhase": "Default",
-			"AdditionalDependencies": [
-				"VoxelCore"
-			]
+			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "ComputeShader",
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit"
-		}
-	],
-	"Plugins": [
-		{
-			"Name": "VoxelCore",
-			"Enabled": true
 		}
 	]
 }

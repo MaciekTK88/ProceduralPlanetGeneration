@@ -5,9 +5,11 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
-#include "GameFramework/Character.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/TextureRenderTarget2D.h"
+#if WITH_EDITOR
 #include "LevelEditorViewport.h"
+#endif
 #include "Engine/GameEngine.h"
 #include "Engine/StaticMeshActor.h"
 #include "ChunkObject.h"
@@ -78,7 +80,7 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 	
 	// Calculate distance from character to chunk center on the sphere.
 	FVector ChunkWorldPos = ChunkOriginLocation * (Planet->PlanetData->PlanetRadius + MaxChunkHeight);
-	float Distance = FVector::Dist(Planet->CharacterLocation, ChunkWorldPos);
+	float Distance = FVector::Dist(Planet->ViewLocation, ChunkWorldPos);
 
 	// Scale back to planet radius
 	ChunkOriginLocation *= Planet->PlanetData->PlanetRadius;
@@ -292,28 +294,10 @@ void APlanetSpawner::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Check for character
-	if (Character == nullptr)
-	{
-		if (UGameplayStatics::GetPlayerCharacter(GetWorld(), 0) != nullptr)
-		{
-			Character = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
-		}
-		else if (UGameplayStatics::GetPlayerPawn(GetWorld(), 0) != nullptr)
-		{
-			Character = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
-		}
-	}
-
-
 	bIsLoading = true;
 	
 	
-	if (Character == nullptr)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, FString::Printf(TEXT("No Character found! Please assign a Character or Pawn to Character variable.")));
-	}
-	else if (SafetyCheck())
+	if (SafetyCheck())
 	{
 		bIsRegenerating = true;
 		PrecomputeChunkData();
@@ -389,6 +373,17 @@ void APlanetSpawner::OnConstruction(const FTransform& Transform)
 	
 	RegeneratePlanet();
 }
+
+#else
+
+void APlanetSpawner::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+}
+
+#endif
+
+#if WITH_EDITOR
 
 void APlanetSpawner::PostRegisterAllComponents()
 {
@@ -672,9 +667,7 @@ void APlanetSpawner::Tick(float DeltaTime)
 {
 	BuildPlanet();
 	FChunkTree::CompletionsThisFrame = 0;
-	
-#if WITH_EDITOR
-	// Print all chunks count
+
 	TArray<FChunkTree*> AllChunks;
 	ChunkTree1.FindConfiguredChunks(AllChunks, true, false);
 	ChunkTree2.FindConfiguredChunks(AllChunks, true, false);
@@ -682,6 +675,9 @@ void APlanetSpawner::Tick(float DeltaTime)
 	ChunkTree4.FindConfiguredChunks(AllChunks, true, false);
 	ChunkTree5.FindConfiguredChunks(AllChunks, true, false);
 	ChunkTree6.FindConfiguredChunks(AllChunks, true, false);
+	
+#if WITH_EDITOR
+	// Print all chunks count
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::Green, FString::Printf(TEXT("Total Chunks: %d"), AllChunks.Num()));
 #endif
 
@@ -815,7 +811,16 @@ void APlanetSpawner::BuildPlanet()
 {
 	if (UGameplayStatics::GetGlobalTimeDilation(GetWorld()) == 1 || GetWorld()->WorldType == EWorldType::Editor)
 	{
-		
+		FVector PlayerViewLocation = FVector::ZeroVector;
+		FRotator PlayerViewRotation = FRotator::ZeroRotator;
+		bool bHasViewPoint = false;
+
+		if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+		{
+			PC->GetPlayerViewPoint(PlayerViewLocation, PlayerViewRotation);
+			bHasViewPoint = true;
+		}
+
 #if WITH_EDITOR
 		if (GetWorld() != nullptr && GetWorld()->WorldType == EWorldType::Editor)
 		{
@@ -823,17 +828,18 @@ void APlanetSpawner::BuildPlanet()
 			FEditorViewportClient* EditorViewClient = (activeViewport != nullptr) ? (FEditorViewportClient*)activeViewport->GetClient() : nullptr;
 			if(EditorViewClient)
 			{
-				CharacterLocation = EditorViewClient->GetViewLocation();
+				ViewLocation = EditorViewClient->GetViewLocation();
 			}
 		}
 		else
 		{
-			CharacterLocation = Character->GetActorLocation();
+			ViewLocation = bHasViewPoint ? PlayerViewLocation : FVector::ZeroVector;
 		}
 #else
+		ViewLocation = bHasViewPoint ? PlayerViewLocation : FVector::ZeroVector;
 #endif
 		
-		CharacterLocation = UKismetMathLibrary::InverseTransformLocation(GetActorTransform(), CharacterLocation);
+		ViewLocation = UKismetMathLibrary::InverseTransformLocation(GetActorTransform(), ViewLocation);
 		
 		float chunkSize = (PlanetData->PlanetRadius * 2.0f) / FMath::Sqrt(2.0f);
 
@@ -989,7 +995,6 @@ void APlanetSpawner::GenerateCurveAtlas()
 	const int32 AtlasHeight = UniqueCurves.Num();
 
 	PlanetData->CurveAtlas = UTexture2D::CreateTransient(AtlasWidth, AtlasHeight, PF_A32B32G32R32F);
-	PlanetData->CurveAtlas->MipGenSettings = TMGS_NoMipmaps;
 	PlanetData->CurveAtlas->SRGB = false;
 	PlanetData->CurveAtlas->Filter = TF_Nearest;
 	PlanetData->CurveAtlas->AddressX = TA_Clamp;
@@ -1055,7 +1060,6 @@ void APlanetSpawner::GenerateGPUBiomeData()
 
 	// Create texture with integer format to avoid float-to-int precision issues
 	PlanetData->GPUBiomeData = UTexture2D::CreateTransient(ParameterCount, BiomeCount, PF_R32_UINT);
-	PlanetData->GPUBiomeData->MipGenSettings = TMGS_NoMipmaps;
 	PlanetData->GPUBiomeData->SRGB = false;
 	PlanetData->GPUBiomeData->Filter = TF_Nearest;
 

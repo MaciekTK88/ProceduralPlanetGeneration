@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <!-- TVoxelSetElement visualizer -->
+  <Type Name="TVoxelSetElement&lt;*&gt;">
+    <DisplayString>{Value}</DisplayString>
+    <Expand>
+      <ExpandedItem>Value</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelSet visualizer -->
+  <Type Name="TVoxelSet&lt;*&gt;">
+    <DisplayString Condition="Elements.ArrayNum == 0">Empty</DisplayString>
+    <DisplayString Condition="Elements.ArrayNum &lt; 0">Invalid</DisplayString>
+    <DisplayString Condition="Elements.ArrayMax &lt; Elements.ArrayNum">Invalid</DisplayString>
+    <DisplayString Condition="Elements.ArrayMax &gt;= Elements.ArrayNum">Num={Elements.ArrayNum}</DisplayString>
+    <Expand>
+      <ExpandedItem>Elements</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelMapElement visualizer -->
+  <Type Name="TVoxelMapElement&lt;*&gt;">
+    <DisplayString>{Key} -&gt; {Value}</DisplayString>
+    <Expand>
+      <Item Name="Key">Key</Item>
+      <Item Name="Value">Value</Item>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelMap visualizer -->
+  <Type Name="TVoxelMap&lt;*&gt;">
+    <DisplayString Condition="Elements.ArrayNum == 0">Empty</DisplayString>
+    <DisplayString Condition="Elements.ArrayNum &lt; 0">Invalid</DisplayString>
+    <DisplayString Condition="Elements.ArrayMax &lt; Elements.ArrayNum">Invalid</DisplayString>
+    <DisplayString Condition="Elements.ArrayMax &gt;= Elements.ArrayNum">Num={Elements.ArrayNum}</DisplayString>
+    <Expand>
+      <ExpandedItem>Elements</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelBitArray visualizer -->
+  <Type Name="TVoxelBitArray&lt;*&gt;">
+    <DisplayString>Num={NumBits}, Max={MaxBits}</DisplayString>
+    <Expand>
+      <IndexListItems>
+        <Size>NumBits</Size>
+        <ValueNode>(((uint32*)AllocatorInstance.Data)[$i / 32] &gt;&gt; ($i % 32)) &amp; 1,d</ValueNode>
+      </IndexListItems>
+    </Expand>
+  </Type>
+
+  <!-- FConstVoxelBitArrayView visualizer -->
+  <Type Name="FConstVoxelBitArrayView">
+    <DisplayString>Num={NumBits}</DisplayString>
+    <Expand>
+      <IndexListItems>
+        <Size>NumBits</Size>
+        <ValueNode>(Allocation[$i / 32] &gt;&gt; ($i % 32)) &amp; 1,d</ValueNode>
+      </IndexListItems>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelSparseArray visualizer -->
+  <Type Name="TVoxelSparseArray&lt;*&gt;">
+    <DisplayString Condition="ArrayNum == 0">Empty</DisplayString>
+    <DisplayString Condition="ArrayNum != 0">Num={ArrayNum}</DisplayString>
+    <Expand>
+      <IndexListItems Condition="ArrayNum &gt; 0">
+        <Size>Values.ArrayNum</Size>
+        <ValueNode Condition="AllocationFlags[$i] != 0">*($T1*)&amp;Values[$i].Value</ValueNode>
+        <ValueNode Condition="AllocationFlags[$i] == 0">"Invalid",sb</ValueNode>
+      </IndexListItems>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelChunkedArray visualizer -->
+  <Type Name="TVoxelChunkedArray&lt;*,*&gt;">
+    <DisplayString>Num={ArrayNum}</DisplayString>
+    <Expand>
+      <IndexListItems>
+        <Size>ArrayNum</Size>
+        <ValueNode>*($T1*)&amp; (*ChunkArray[$i / (1 &lt;&lt; __log2($T2 / sizeof($T1)))])[$i % (1 &lt;&lt; __log2($T2 / sizeof($T1)))]</ValueNode>
+      </IndexListItems>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelChunkedSparseArray visualizer -->
+  <Type Name="TVoxelChunkedSparseArray&lt;*,*&gt;">
+    <DisplayString>Num={ArrayNum}</DisplayString>
+    <Expand>
+      <IndexListItems>
+        <Size>ArrayMax</Size>
+        <ValueNode Condition="Chunks[$i / $T2]->AllocationFlags[$i] != 0">*($T1*)&amp; Chunks[$i / $T2]->Values[$i % $T2].Value</ValueNode>
+        <ValueNode Condition="Chunks[$i / $T2]->AllocationFlags[$i] == 0">"Invalid",sb</ValueNode>
+      </IndexListItems>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelStaticArray visualizer -->
+  <Type Name="TVoxelStaticArray&lt;*,*,*&gt;">
+    <DisplayString>Num={$T2}</DisplayString>
+    <Expand>
+      <ArrayItems>
+        <Size>$T2</Size>
+        <ValuePointer>(TVoxelStaticArray&lt;$T1,$T2,$T3&gt;::ElementType*)Data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelStaticBitArray visualizer -->
+  <Type Name="TVoxelStaticBitArray&lt;*&gt;">
+    <DisplayString>Num={$T1,d}</DisplayString>
+    <Expand>
+      <Item Name ="Words">Array</Item>
+      <IndexListItems>
+        <Size>$T1</Size>
+        <ValueNode>(Array[$i / 32] &gt;&gt; ($i % 32)) &amp; 1,d</ValueNode>
+      </IndexListItems>
+    </Expand>
+  </Type>
+
+  <!-- FVoxelFuture visualizer -->
+  <Type Name="FVoxelFuture">
+    <DisplayString Condition="!PromiseState.Object">null</DisplayString>
+    <DisplayString Condition="PromiseState.Object &amp;&amp; PromiseState.Object->bIsComplete.Storage.Atomic._Storage._Value">[Done]</DisplayString>
+    <DisplayString Condition="PromiseState.Object &amp;&amp; !PromiseState.Object->bIsComplete.Storage.Atomic._Storage._Value">[Pending]</DisplayString>
+  </Type>
+
+  <!-- TVoxelFuture visualizer -->
+  <Type Name="TVoxelFuture&lt;*&gt;">
+    <DisplayString Condition="!PromiseState.Object">null</DisplayString>
+    <DisplayString Condition="PromiseState.Object &amp;&amp; PromiseState.Object->bIsComplete.Storage.Atomic._Storage._Value">[Done] {*($T1*)PromiseState.Object->Value.Object}</DisplayString>
+    <DisplayString Condition="PromiseState.Object &amp;&amp; !PromiseState.Object->bIsComplete.Storage.Atomic._Storage._Value">[Pending]</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="PromiseState.Object &amp;&amp; PromiseState.Object->bIsComplete.Storage.Atomic._Storage._Value">*($T1*)PromiseState.Object->Value.Object</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelOptional visualizer -->
+  <Type Name="TVoxelOptional&lt;*&gt;">
+    <SmartPointer Usage="Minimal">($T1*)&amp;Storage</SmartPointer>
+    <DisplayString Condition="!bIsSet">Unset</DisplayString>
+    <DisplayString Condition="bIsSet">{*($T1*)&amp;Storage}</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="bIsSet">*($T1*)&amp;Storage</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelTypeCompatibleBytes visualizer -->
+  <Type Name="TVoxelTypeCompatibleBytes&lt;*&gt;">
+    <DisplayString>{*($T1*)this}</DisplayString>
+    <Expand>
+      <ExpandedItem>*($T1*)this</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- FVoxelObjectPtr visualizer -->
+  <Type Name="FVoxelObjectPtr">
+    <SmartPointer Usage="Minimal">(UObject*)GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].Object</SmartPointer>
+    <DisplayString Condition="ObjectSerialNumber &lt; 1">nullptr</DisplayString>
+    <DisplayString Condition="GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].SerialNumber != ObjectSerialNumber">STALE</DisplayString>
+    <DisplayString>{(UObject*)GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].Object}</DisplayString>
+    <Expand>
+      <ExpandedItem>(UObject*)GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].Object</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelObjectPtr visualizer -->
+  <Type Name="TVoxelObjectPtr&lt;*&gt;">
+    <SmartPointer Usage="Minimal">($T1*)GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].Object</SmartPointer>
+    <DisplayString Condition="ObjectSerialNumber &lt; 1">nullptr</DisplayString>
+    <DisplayString Condition="GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].SerialNumber != ObjectSerialNumber">STALE</DisplayString>
+    <DisplayString>{($T1*)GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].Object}</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="ObjectSerialNumber &gt; 0">($T1*)GObjectArrayForDebugVisualizers->Objects[ObjectIndex / 65536][ObjectIndex % 65536].Object</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- FVoxelInstancedStruct visualizer -->
+  <Type Name="FVoxelInstancedStruct">
+    <DisplayString Condition = "PrivateScriptStruct == nullptr">Unset</DisplayString>
+    <DisplayString Condition = "PrivateScriptStruct != nullptr">Type=F{PrivateScriptStruct->NamePrivate,sb}</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="PrivateScriptStruct != nullptr">*(FVoxelVirtualStruct*)PrivateStructMemory.Object</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- TVoxelInstancedStruct visualizer -->
+  <Type Name="TVoxelInstancedStruct&lt;*&gt;">
+    <DisplayString Condition = "PrivateScriptStruct == nullptr">Unset</DisplayString>
+    <DisplayString Condition = "PrivateScriptStruct != nullptr">Type=F{PrivateScriptStruct->NamePrivate}</DisplayString>
+    <Expand>
+      <ExpandedItem Condition="PrivateScriptStruct != nullptr">*($T1*)PrivateStructMemory.Object</ExpandedItem>
+    </Expand>
+  </Type>
+
+  <!-- FFloat16 visualizer -->
+  <Type Name="FFloat16">
+    <DisplayString Condition = "Components.Exponent == 0">{(0.00006103515625f * Components.Mantissa/1024.0f)}</DisplayString>
+    <DisplayString Condition = "Components.Exponent == 31 &amp;&amp; Components.Mantissa == 0">{Components.Sign*-2+1}.#INFINITY</DisplayString>
+    <DisplayString Condition = "Components.Exponent == 31">#NaN</DisplayString>
+    <DisplayString Condition = "Components.Exponent &lt; 15">{1.0f / (1 &lt;&lt; (15 - Components.Exponent)) * (Components.Sign*-2+1.0f) * (1.0f + Components.Mantissa/1024.0f)}</DisplayString>
+    <DisplayString Condition = "Components.Exponent &gt; 15">{(1 &lt;&lt; (Components.Exponent-15)) * (Components.Sign*-2+1.0f) * (1.0f + Components.Mantissa/1024.0f)}</DisplayString>
+    <DisplayString>{(Components.Sign*-2+1) * 1.0f + Components.Mantissa/1024.0f}</DisplayString>
+  </Type>
+
+  <!-- TVoxelRefCountPtr visualizer -->
+  <Type Name="TVoxelRefCountPtr&lt;*&gt;">
+    <SmartPointer Usage="Minimal">PrivateReference</SmartPointer>
+  </Type>
+
+</AutoVisualizer>

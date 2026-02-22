@@ -5,7 +5,7 @@
 #include "StaticMeshResources.h"
 #include "MeshCardBuild.h"
 
-#include "VoxelNanite.h"
+#include "../../VoxelCore/Private/VoxelNanite.h"
 #include "Engine/StaticMesh.h"
 #include "Rendering/NaniteResources.h"
 #include "Async/Async.h"

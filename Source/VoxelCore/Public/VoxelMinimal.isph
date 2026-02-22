@@ -1,0 +1,21 @@
+// Copyright Voxel Plugin SAS. All Rights Reserved.
+
+#pragma once
+
+// ReSharper disable CppUnusedIncludeDirective
+
+#include "VoxelCoreMinimal.isph"
+#include "VoxelCoreTypes.isph"
+#include "VoxelCoreUniformMath.isph"
+
+#if INTELLISENSE_PARSER
+#include "VoxelCoreMath.isph"
+#else
+#define generic uniform
+#include "VoxelCoreMath.isph"
+#undef generic
+
+#define generic varying
+#include "VoxelCoreMath.isph"
+#undef generic
+#endif

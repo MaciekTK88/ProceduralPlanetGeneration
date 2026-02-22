@@ -123,9 +123,6 @@ public:
 	void DestroyChunkTrees();
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Planet|Setup")
-	TObjectPtr<AActor> Character;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Planet|Setup")
 	TObjectPtr<UPlanetData> PlanetData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Planet|Setup")
@@ -180,7 +177,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collision")
 	FCollisionResponseContainer CollisionSetup;
 	
-	FVector CharacterLocation;
+	FVector ViewLocation;
 	bool bIsLoading = true;
 	bool bIsRegenerating = false;
 

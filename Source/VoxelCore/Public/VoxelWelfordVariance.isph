@@ -1,0 +1,77 @@
+// Copyright Voxel Plugin SAS. All Rights Reserved.
+
+#pragma once
+
+#include "VoxelMinimal.isph"
+
+struct FVoxelWelfordVariance
+{
+	// Average value
+	varying float Average;
+	// ScaledVariance = Sum(Square(X[i] - Average))
+	// Variance = ScaledVariance / (Num - 1)
+	varying float ScaledVariance;
+	// Number of values
+	varying float Num;
+};
+
+FORCEINLINE void InitializeVariance(FVoxelWelfordVariance& Variance)
+{
+	Variance.Average = 0.f;
+	Variance.ScaledVariance = 0.f;
+	Variance.Num = 0.f;
+}
+
+FORCEINLINE void AddVariance(
+	FVoxelWelfordVariance& Variance,
+	const varying float Value)
+{
+	Variance.Num += 1.f;
+
+	const varying float Delta = Value - Variance.Average;
+	Variance.Average += Delta / Variance.Num;
+	Variance.ScaledVariance += Delta * (Value - Variance.Average);
+}
+FORCEINLINE void AddVariance(
+	FVoxelWelfordVariance& Variance,
+	const uniform float Value)
+{
+	uniform float Num = extract(Variance.Num, 0);
+	uniform float Average = extract(Variance.Average, 0);
+	uniform float ScaledVariance = extract(Variance.ScaledVariance, 0);
+
+	Num += 1.f;
+
+	const uniform float Delta = Value - Average;
+	Average += Delta / Num;
+	ScaledVariance += Delta * (Value - Average);
+
+	Variance.Num = insert(Variance.Num, 0, Num);
+	Variance.Average = insert(Variance.Average, 0, Average);
+	Variance.ScaledVariance = insert(Variance.ScaledVariance, 0, ScaledVariance);
+}
+
+FORCEINLINE uniform float GetUniformAverage(const FVoxelWelfordVariance Variance)
+{
+	const varying float Weight = Variance.Num / reduce_add(Variance.Num);
+	return reduce_add(Weight * Variance.Average);
+}
+FORCEINLINE uniform float GetUniformVariance(const FVoxelWelfordVariance Variance)
+{
+	const varying float Variance_Array = select(
+		Variance.Num <= 1,
+		0.f,
+		Variance.ScaledVariance / (Variance.Num - 1));
+
+	const varying float Average_Array = Variance.Average;
+	const varying float Weight_Array = Variance.Num / reduce_add(Variance.Num);
+
+	const uniform float Variance_Average = reduce_add(Weight_Array * Variance_Array);
+
+	const uniform float Average_Average = reduce_add(Weight_Array * Average_Array);
+	const uniform float Average_Variance = reduce_add(Weight_Array * Square(Average_Array - Average_Average));
+
+	// Law of Total Variance: variance is the mean of the variances + the variance of the means
+	// !!!!! Note that this is an over-estimation: true variance will be smaller !!!!!
+	return Variance_Average + Average_Variance;
+}

@@ -174,13 +174,13 @@ struct FPackedUVRange
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-struct FEncodingSettings
+struct VOXELCORE_API FEncodingSettings
 {
 	int32 PositionPrecision = 4;
 	static constexpr int32 NormalBits = 8;
 };
 
-struct FEncodingInfo
+struct VOXELCORE_API FEncodingInfo
 {
 	FEncodingSettings Settings;
 
@@ -204,7 +204,7 @@ struct FEncodingInfo
 ///////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
 
-class FCluster
+class VOXELCORE_API FCluster
 {
 public:
 	TVoxelFixedArray<FVector3f, NANITE_MAX_CLUSTER_VERTICES> Positions;
@@ -258,7 +258,7 @@ private:
 	mutable TOptional<FEncodingInfo> CachedEncodingInfo;
 };
 
-void CreatePageData(
+VOXELCORE_API void CreatePageData(
 	TVoxelArrayView<TUniquePtr<FCluster>> Clusters,
 	const FEncodingSettings& EncodingSettings,
 	TVoxelChunkedArray<uint8>& PageData);

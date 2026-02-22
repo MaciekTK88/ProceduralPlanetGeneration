@@ -4,7 +4,9 @@
 #include "MaterialExpressionPlanetNoise.h"
 #include "MaterialCompiler.h"
 #include "Materials/MaterialExpressionCustom.h"
+#if WITH_EDITOR
 #include "MaterialGraph/MaterialGraphNode.h"
+#endif
 
 UMaterialExpressionPlanetNoise::UMaterialExpressionPlanetNoise(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)

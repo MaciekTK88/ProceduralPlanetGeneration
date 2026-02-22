@@ -48,12 +48,21 @@ public class PPG : ModuleRules
 				"ComputeShader",
 				"RenderCore",
 				"RHI",
-				"Chaos",
-				"UnrealEd",
-				"LevelEditor"
+				"Chaos"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
+
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"UnrealEd",
+					"LevelEditor"
+				}
+				);
+		}
 		
 		
 		DynamicallyLoadedModuleNames.AddRange(

@@ -1,3 +1,4 @@
+using System.IO;
 using UnrealBuildTool; 
 
 public class ComputeShader: ModuleRules 
@@ -8,12 +9,14 @@ public class ComputeShader: ModuleRules
 
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-		
-		PrivateIncludePaths.AddRange(new string[] 
+
+		PrivateIncludePaths.Add("ComputeShader/Private");
+
+		string RendererPrivatePath = Path.Combine(EngineDirectory, "Source", "Runtime", "Renderer", "Private");
+		if (Directory.Exists(RendererPrivatePath))
 		{
-			"Runtime/Renderer/Private",
-			"ComputeShader/Private"
-		});
+			PrivateIncludePaths.Add(RendererPrivatePath);
+		}
 		if (Target.bBuildEditor == true)
 		{
 			PrivateDependencyModuleNames.Add("TargetPlatform");
