@@ -97,44 +97,74 @@ FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread
 {
 	FPlanetComputeShaderReadback Readback;
 
+	//----------------------------------------------------------------------
+	// Validate Material
+	//----------------------------------------------------------------------
+	const FSceneInterface* LocalScene = Params.Scene;
+	if (!LocalScene)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetComputeShader: No scene available for material '%s'. Skipping dispatch."),
+			*Params.MaterialDebugName);
+		Readback.bRetryDispatch = true;
+		return Readback;
+	}
+
+	const FMaterialRenderProxy* MaterialRenderProxy = Params.MaterialRenderProxy;
+	if (!MaterialRenderProxy)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetComputeShader: No material proxy available for '%s'. Skipping dispatch."),
+			*Params.MaterialDebugName);
+		Readback.bRetryDispatch = true;
+		return Readback;
+	}
+
+	const FMaterialRenderProxy* FallbackMaterialRenderProxy = nullptr;
+	const FMaterial* MaterialResource = &MaterialRenderProxy->GetMaterialWithFallback(
+		LocalScene->GetFeatureLevel(),
+		FallbackMaterialRenderProxy);
+	if (FallbackMaterialRenderProxy)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetComputeShader: Material '%s' resolved to a fallback render proxy. Skipping dispatch."),
+			*Params.MaterialDebugName);
+		Readback.bRetryDispatch = true;
+		return Readback;
+	}
+
+	MaterialRenderProxy = FallbackMaterialRenderProxy ? FallbackMaterialRenderProxy : MaterialRenderProxy;
+
+	if (!MaterialResource || !MaterialResource->GetRenderingThreadShaderMap())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetComputeShader: Material '%s' is not ready on the render thread. Skipping dispatch."),
+			*Params.MaterialDebugName);
+		Readback.bRetryDispatch = true;
+		return Readback;
+	}
+
+	//----------------------------------------------------------------------
+	// Get Shader
+	//----------------------------------------------------------------------
+	// FLocalVertexFactory used as dummy since we don't have a real mesh
+	FMaterialShaderTypes ShaderTypes;
+	ShaderTypes.AddShaderType<FPlanetComputeShader>();
+
+	FMaterialShaders MaterialShaders;
+	TShaderRef<FPlanetComputeShader> ComputeShader;
+	if (!MaterialResource->TryGetShaders(ShaderTypes, &FLocalVertexFactory::StaticType, MaterialShaders)
+		|| !MaterialShaders.TryGetComputeShader(ComputeShader)
+		|| !ComputeShader.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetComputeShader: Shader permutation missing for material '%s'. Ensure the Generation Material has the required usage flag and let shaders finish compiling."),
+			*Params.MaterialDebugName);
+		Readback.bRetryDispatch = true;
+		return Readback;
+	}
+
 	FRDGBuilder GraphBuilder(RHICmdList);
 	{
 		SCOPE_CYCLE_COUNTER(STAT_PlanetComputeShader_Execute);
 		DECLARE_GPU_STAT(PlanetComputeShader);
 		RDG_EVENT_SCOPE(GraphBuilder, "PlanetComputeShader");
 		RDG_GPU_STAT_SCOPE(GraphBuilder, PlanetComputeShader);
-
-		//----------------------------------------------------------------------
-		// Validate Material
-		//----------------------------------------------------------------------
-		const FMaterialRenderProxy* MaterialProxy = Params.MaterialRenderProxy;
-		if (!MaterialProxy)
-		{
-			UE_LOG(LogTemp, Error, TEXT("PlanetComputeShader: No material proxy provided"));
-			return Readback;
-		}
-		
-		const FMaterial* Material = MaterialProxy->GetMaterialNoFallback(GMaxRHIFeatureLevel);
-		if (!Material || !Material->GetRenderingThreadShaderMap())
-		{
-			UE_LOG(LogTemp, Error, TEXT("PlanetComputeShader: Material not ready or shader not compiled. Ensure 'Used with Lidar Point Cloud' is enabled on the Generation Material."));
-			return Readback;
-		}
-
-		//----------------------------------------------------------------------
-		// Get Shader
-		//----------------------------------------------------------------------
-		// FLocalVertexFactory used as dummy since we don't have a real mesh
-		TShaderRef<FPlanetComputeShader> ComputeShader = Material->GetShader<FPlanetComputeShader>(
-			&FLocalVertexFactory::StaticType, 
-			false
-		);
-
-		if (!ComputeShader.IsValid())
-		{
-			UE_LOG(LogTemp, Error, TEXT("PlanetComputeShader: Shader not found. Ensure 'Used with Lidar Point Cloud' is enabled on the Generation Material and recompile shaders."));
-			return Readback;
-		}
 
 		//----------------------------------------------------------------------
 		// Setup Parameters
@@ -166,8 +196,9 @@ FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread
 		
 		// Create minimal view uniform buffer (required for material evaluation)
 		FViewUniformShaderParameters ViewParams;
-		ViewParams.GameTime = 0.0f;
-		ViewParams.RealTime = 0.0f;
+		ViewParams.GameTime = Params.GameTime;
+		ViewParams.RealTime = Params.GameTime;
+		ViewParams.Random = Params.Random;
 		PassParams->View = TUniformBufferRef<FViewUniformShaderParameters>::CreateUniformBufferImmediate(
 			ViewParams, 
 			UniformBuffer_SingleFrame
@@ -205,9 +236,9 @@ FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread
 			RDG_EVENT_NAME("PlanetComputeShader"),
 			PassParams,
 			ERDGPassFlags::AsyncCompute,
-			[PassParams, ComputeShader, MaterialProxy, Material, GroupCount](FRHIComputeCommandList& RHICmdList)
+			[PassParams, ComputeShader, MaterialRenderProxy, MaterialResource, LocalScene, GroupCount](FRHIComputeCommandList& RHICmdList)
 			{
-				MaterialProxy->UpdateUniformExpressionCacheIfNeeded(GMaxRHIFeatureLevel);
+				MaterialRenderProxy->UpdateUniformExpressionCacheIfNeeded(LocalScene->GetFeatureLevel());
 
 				// Setup shader bindings
 				FMeshMaterialShaderElementData ShaderElementData;
@@ -220,11 +251,11 @@ FPlanetComputeShaderReadback FPlanetComputeShaderInterface::DispatchRenderThread
 				int32 DataOffset = 0;
 				FMeshDrawSingleShaderBindings SingleBindings = ShaderBindings.GetSingleShaderBindings(SF_Compute, DataOffset);
 				ComputeShader->GetShaderBindings(
-					nullptr,              // Scene
-					GMaxRHIFeatureLevel,  // FeatureLevel
+					LocalScene->GetRenderScene(), // Scene
+					LocalScene->GetFeatureLevel(), // FeatureLevel
 					nullptr,              // PrimitiveSceneProxy
-					*MaterialProxy,       // MaterialRenderProxy
-					*Material,            // Material
+					*MaterialRenderProxy, // MaterialRenderProxy
+					*MaterialResource,    // Material
 					ShaderElementData,    // ElementData
 					SingleBindings        // ShaderBindings
 				);

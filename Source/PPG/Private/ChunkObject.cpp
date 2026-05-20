@@ -14,6 +14,8 @@
 #include "PhysicsEngine/BodySetup.h"
 #include "VoxelChaosTriangleMeshCooker.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/SceneComponent.h"
+#include "GameFramework/Actor.h"
 #include "StaticMeshResources.h"
 #include "Materials/Material.h"
 #include "ComputeShader/Public/PlanetComputeShader/PlanetComputeShader.h"
@@ -224,6 +226,22 @@ void UChunkObject::GenerateChunk()
 		? PlanetData->GenerationMaterial 
 		: UMaterial::GetDefaultMaterial(MD_Surface);
 	Params.MaterialRenderProxy = Params.GenerationMaterial->GetRenderProxy();
+	Params.MaterialDebugName = GetNameSafe(Params.GenerationMaterial);
+
+	if (AActor* OwnerActor = GetTypedOuter<AActor>())
+	{
+		if (USceneComponent* RootComponent = OwnerActor->GetRootComponent())
+		{
+			Params.Scene = RootComponent->GetScene();
+		}
+
+		if (UWorld* World = OwnerActor->GetWorld())
+		{
+			Params.GameTime = World->GetTimeSeconds();
+		}
+	}
+
+	Params.Random = FMath::Rand();
 
 	// Pre-allocate vertex buffers
 	const int32 TotalVertices = VerticesCount * VerticesCount;
@@ -237,6 +255,12 @@ void UChunkObject::GenerateChunk()
 	FPlanetComputeShaderReadback Readback;
 	FPlanetComputeShaderInterface::Dispatch(Params, [this](FPlanetComputeShaderReadback Readback)
 	{
+		if (Readback.bRetryDispatch && !bAbortAsync)
+		{
+			ChunkStatus = EChunkStatus::PENDING_GENERATION;
+			return;
+		}
+
 		// Validate the readback has valid data before proceeding
 		if (Readback.NumVertices > 0 && Readback.OutputBuffer.IsValid() && Readback.OutputVCBuffer.IsValid())
 		{
@@ -601,7 +625,7 @@ void UChunkObject::CompleteChunkGeneration()
 								// Generate a random stream based on the quantized position for consistent randomness
 								FRandomStream ScaleStream(GetTypeHash(PlanetSpaceFoliageLocation));
 
-								FVector2d NewLocalPos = HashFVectorToVector2D(PlanetSpaceFoliageLocation, -FoliageSpacing / 2, FoliageSpacing / 2, FoliageSpacing / 4.0f);
+								FVector2d NewLocalPos = HashFVectorToVector2D(PlanetSpaceFoliageLocation, -FoliageSpacing / 2, FoliageSpacing / 2, 0.0f);
 									
 									// Base position for the cluster center (or single instance)
 									float BaseXLocalPos = xlocalpos + NewLocalPos.X;
@@ -1231,20 +1255,22 @@ uint32_t UChunkObject::fmix32(uint32_t h)
 	return h;
 }
 
-uint32_t UChunkObject::FloatAsUint(float f)
+uint32_t UChunkObject::HashGrid3D(int64 X, int64 Y, int64 Z, uint32_t Salt)
 {
-	uint32_t u;
-	std::memcpy(&u, &f, sizeof(u));
-	return u;
-}
+	const uint64 ux = static_cast<uint64>(X);
+	const uint64 uy = static_cast<uint64>(Y);
+	const uint64 uz = static_cast<uint64>(Z);
 
-float UChunkObject::QuantizeFloat(float f, float Range)
-{
-	if (Range <= 0.0f)
-	{
-		return f;
-	}
-	return FMath::RoundToFloat(f / Range) * Range;
+	const uint32 hx = static_cast<uint32>(ux) ^ static_cast<uint32>(ux >> 32);
+	const uint32 hy = static_cast<uint32>(uy) ^ static_cast<uint32>(uy >> 32);
+	const uint32 hz = static_cast<uint32>(uz) ^ static_cast<uint32>(uz >> 32);
+
+	uint32 h = Salt;
+	h ^= hx * 0x9e3779b1u;
+	h ^= hy * 0x85ebca6bu;
+	h ^= hz * 0xc2b2ae35u;
+
+	return fmix32(h);
 }
 
 double UChunkObject::QuantizeDouble(double d, double Range)
@@ -1255,35 +1281,25 @@ double UChunkObject::QuantizeDouble(double d, double Range)
 	}
 	return FMath::RoundToDouble(d / Range) * Range;
 }
-
-float UChunkObject::Hash3DToUnit(const FVector& P, uint32_t Salt)
-{
-	const uint32_t ux = FloatAsUint(P.X);
-	const uint32_t uy = FloatAsUint(P.Y);
-	const uint32_t uz = FloatAsUint(P.Z);
-
-	uint32_t h = (ux * 0x9e3779b1u) ^ (uy * 0x85ebca6bu) ^ (uz * 0xc2b2ae35u) ^ Salt;
-	h = fmix32(h);
-
-	return static_cast<float>(h) / 4294967295.0f;
-}
-
 FVector2D UChunkObject::HashFVectorToVector2D(const FVector& Input, float RangeMin, float RangeMax, float RangeTolerance)
 {
-	FVector QuantizedInput = Input;
+	const double QuantizeStep = (RangeTolerance > 0.0f) ? static_cast<double>(RangeTolerance) : 1.0;
+	const double InvQuantizeStep = 1.0 / QuantizeStep;
 
-	if (RangeTolerance > 0.0f)
-	{
-		QuantizedInput.X = QuantizeFloat(Input.X, RangeTolerance);
-		QuantizedInput.Y = QuantizeFloat(Input.Y, RangeTolerance);
-		QuantizedInput.Z = QuantizeFloat(Input.Z, RangeTolerance);
-	}
+	const int64 qx = FMath::RoundToInt64(Input.X * InvQuantizeStep);
+	const int64 qy = FMath::RoundToInt64(Input.Y * InvQuantizeStep);
+	const int64 qz = FMath::RoundToInt64(Input.Z * InvQuantizeStep);
 
-	const float hx = Hash3DToUnit(QuantizedInput, 0x243F6A88u);
-	const float hy = Hash3DToUnit(QuantizedInput, 0x85A308D3u);
+	const uint32 baseHash = HashGrid3D(qx, qy, qz, 0x243F6A88u);
+	const uint32 xHash = fmix32(baseHash ^ 0x85A308D3u);
+	const uint32 yHash = fmix32(baseHash ^ 0x13198A2Eu);
 
-	const float x = FMath::Lerp(RangeMin, RangeMax, hx);
-	const float y = FMath::Lerp(RangeMin, RangeMax, hy);
+	constexpr float OneOverUint32Max = 1.0f / 4294967295.0f;
+	const float hx = static_cast<float>(xHash) * OneOverUint32Max;
+	const float hy = static_cast<float>(yHash) * OneOverUint32Max;
+
+	const float x = RangeMin + (RangeMax - RangeMin) * hx;
+	const float y = RangeMin + (RangeMax - RangeMin) * hy;
 
 	return FVector2D(x, y);
 }

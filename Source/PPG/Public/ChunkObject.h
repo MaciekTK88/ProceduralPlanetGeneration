@@ -233,9 +233,7 @@ private:
 
 	// Hashing and math helpers
 	static uint32_t fmix32(uint32_t h);
-	static uint32_t FloatAsUint(float f);
-	static float QuantizeFloat(float f, float Range);
+	static uint32_t HashGrid3D(int64 X, int64 Y, int64 Z, uint32_t Salt = 0u);
 	static double QuantizeDouble(double d, double Range);
-	static float Hash3DToUnit(const FVector& P, uint32_t Salt = 0u);
 	static FVector2D HashFVectorToVector2D(const FVector& Input, float RangeMin, float RangeMax, float RangeTolerance = 0.0f);
 };

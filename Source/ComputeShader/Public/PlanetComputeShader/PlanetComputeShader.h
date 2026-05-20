@@ -11,6 +11,7 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Materials/MaterialRenderProxy.h"
 #include "RHIGPUReadback.h"
+#include "SceneInterface.h"
 
 //------------------------------------------------------------------------------
 // Dispatch Parameters
@@ -39,6 +40,10 @@ struct COMPUTESHADER_API FPlanetComputeShaderDispatchParams
 	// Material for evaluation
 	TObjectPtr<UMaterialInterface> GenerationMaterial;
 	const FMaterialRenderProxy* MaterialRenderProxy = nullptr;
+	const FSceneInterface* Scene = nullptr;
+	FString MaterialDebugName;
+	float GameTime = 0.0f;
+	uint32 Random = 0;
 
 	// Shader configuration
 	uint32 BiomeCount = 0;          // Number of biomes
@@ -54,6 +59,7 @@ struct COMPUTESHADER_API FPlanetComputeShaderReadback
 	TSharedPtr<FRHIGPUBufferReadback> OutputBuffer;    // Vertex positions (NumVertices * 3 floats)
 	TSharedPtr<FRHIGPUBufferReadback> OutputVCBuffer;  // Vertex colors (NumVertices * 4 bytes RGBA)
 	int32 NumVertices = 0;                             // Total vertex count
+	bool bRetryDispatch = false;                       // Material shader is not ready yet; keep the chunk pending.
 };
 
 //------------------------------------------------------------------------------

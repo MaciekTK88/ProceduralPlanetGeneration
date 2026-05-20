@@ -17,6 +17,34 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Materials/Material.h"
 
+namespace
+{
+	bool HasLidarPointCloudUsage(UMaterialInterface* MaterialInterface)
+	{
+		if (!MaterialInterface)
+		{
+			return false;
+		}
+
+		UMaterial* BaseMaterial = MaterialInterface->GetMaterial();
+		return BaseMaterial != nullptr && BaseMaterial->bUsedWithLidarPointCloud;
+	}
+
+	bool IsMaterialInterfaceReadyForCompute(UMaterialInterface* MaterialInterface)
+	{
+		if (!MaterialInterface)
+		{
+			return false;
+		}
+
+		UMaterial* BaseMaterial = MaterialInterface->GetMaterial();
+		return BaseMaterial != nullptr
+			&& HasLidarPointCloudUsage(MaterialInterface)
+			&& !BaseMaterial->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel)
+			&& MaterialInterface->GetRenderProxy() != nullptr;
+	}
+}
+
 
 void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, FVector ChunkLocation, double LocalChunkSize, APlanetSpawner* Planet, FChunkTree* ParentGeneratedChunk)
 {
@@ -165,6 +193,11 @@ void FChunkTree::GenerateChunks(int32 RecursionLevel, FIntVector ChunkRotation, 
 		}
 		else if (ChunkObject->ChunkStatus == UChunkObject::EChunkStatus::PENDING_GENERATION)
 		{
+			if (!Planet->IsGenerationMaterialReady())
+			{
+				return;
+			}
+
 			// Delay generation start based on recursion level:
 			// Higher recursion chunks wait more frames to prioritize closer LODs.
 			// Delay = floor(RecursionLevel / 2) frames (e.g. level 2 → 1, level 10 → 5)
@@ -299,30 +332,32 @@ void APlanetSpawner::BeginPlay()
 	
 	if (SafetyCheck())
 	{
-		bIsRegenerating = true;
-		PrecomputeChunkData();
-		bIsRegenerating = false;
-		SetActorTickEnabled(true);
+		RegeneratePlanet();
 	}
-	
-
-	Super::BeginPlay();
 }
 
 
 void APlanetSpawner::RegeneratePlanet()
 {
-	// Safety check: Don't regenerate if material is compiling
-	if (PlanetData && PlanetData->GenerationMaterial)
+	if (PlanetData && PlanetData->GenerationMaterial && !HasLidarPointCloudUsage(PlanetData->GenerationMaterial))
 	{
-		UMaterial* BaseMat = PlanetData->GenerationMaterial->GetMaterial();
-		if (BaseMat && BaseMat->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("PlanetSpawner: Skipping regeneration because material is compiling."));
-			return;
-		}
+		bRegenerateWhenMaterialReady = false;
+		SetActorTickEnabled(false);
+		ClearComponents();
+		UE_LOG(LogTemp, Warning, TEXT("PlanetSpawner: Cannot regenerate because GenerationMaterial '%s' is missing Used with Lidar Point Cloud."),
+			*GetNameSafe(PlanetData->GenerationMaterial));
+		return;
 	}
 
+	if (PlanetData && !IsGenerationMaterialReady())
+	{
+		bRegenerateWhenMaterialReady = true;
+		SetActorTickEnabled(true);
+		UE_LOG(LogTemp, Warning, TEXT("PlanetSpawner: Deferring regeneration until the generation material finishes compiling."));
+		return;
+	}
+
+	bRegenerateWhenMaterialReady = false;
 	SetActorTickEnabled(false);
 	ClearComponents();
 	
@@ -342,6 +377,12 @@ void APlanetSpawner::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+bool APlanetSpawner::IsGenerationMaterialReady() const
+{
+	return PlanetData != nullptr
+		&& IsMaterialInterfaceReadyForCompute(PlanetData->GenerationMaterial);
+}
+
 #if WITH_EDITOR
 
 void APlanetSpawner::OnConstruction(const FTransform& Transform)
@@ -357,20 +398,6 @@ void APlanetSpawner::OnConstruction(const FTransform& Transform)
 		}
 	}
 
-	// Ensure generation material is compiled before first use
-	if (PlanetData && PlanetData->GenerationMaterial)
-	{
-		UMaterialInterface* GenMaterial = PlanetData->GenerationMaterial;
-		
-		// Get the base material (in case it's a material instance)
-		UMaterial* BaseMaterial = GenMaterial->GetMaterial();
-		if (BaseMaterial && !BaseMaterial->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel))
-		{
-			BaseMaterial->ForceRecompileForRendering();
-			BaseMaterial->MarkPackageDirty();
-		}
-	}
-	
 	RegeneratePlanet();
 }
 
@@ -418,10 +445,7 @@ void APlanetSpawner::OnEndPIE(const bool bIsSimulating)
 {
 	if (SafetyCheck())
 	{
-		bIsRegenerating = true;
-		PrecomputeChunkData();
-		SetActorTickEnabled(true);
-		bIsRegenerating = false;
+		RegeneratePlanet();
 	}
 }
 
@@ -460,16 +484,7 @@ void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEv
 		if (PropertyName == GET_MEMBER_NAME_CHECKED(APlanetSpawner, PlanetData))
 		{
 			// PlanetData asset was switched - compile the new generation material
-			if (PlanetData && PlanetData->GenerationMaterial)
-			{
-				UMaterial* BaseMaterial = PlanetData->GenerationMaterial->GetMaterial();
-				if (BaseMaterial)
-				{
-					UE_LOG(LogTemp, Log, TEXT("PlanetData switched - compiling generation material"));
-					BaseMaterial->ForceRecompileForRendering();
-					BaseMaterial->MarkPackageDirty();
-				}
-			}
+			HandleGenerationMaterialChanged();
 			return;
 		}
 	}
@@ -482,17 +497,7 @@ void APlanetSpawner::OnObjectPropertyChanged(UObject* Object, FPropertyChangedEv
 			FName PropertyName = Event.Property->GetFName();
 			if (PropertyName == GET_MEMBER_NAME_CHECKED(UPlanetData, GenerationMaterial))
 			{
-				// Generation material was switched - compile it
-				if (PlanetData->GenerationMaterial)
-				{
-					UMaterial* BaseMaterial = PlanetData->GenerationMaterial->GetMaterial();
-					if (BaseMaterial)
-					{
-						UE_LOG(LogTemp, Log, TEXT("GenerationMaterial switched - compiling material"));
-						BaseMaterial->ForceRecompileForRendering();
-						BaseMaterial->MarkPackageDirty();
-					}
-				}
+				HandleGenerationMaterialChanged();
 				return;
 			}
 		}
@@ -543,6 +548,12 @@ void APlanetSpawner::OnMaterialCompilationFinished(UMaterialInterface* Material)
 	{
 		if (CurrentMaterial == GenMaterial)
 		{
+			if (!IsGenerationMaterialReady())
+			{
+				return;
+			}
+
+			bRegenerateWhenMaterialReady = false;
 			UE_LOG(LogTemp, Log, TEXT("Generation material recompiled - regenerating planet"));
 			bIsRegenerating = true;
 			RegeneratePlanet();
@@ -567,6 +578,12 @@ void APlanetSpawner::OnMaterialCompilationFinished(UMaterialInterface* Material)
 	{
 		if (GenCurrent == Material)
 		{
+			if (!IsGenerationMaterialReady())
+			{
+				return;
+			}
+
+			bRegenerateWhenMaterialReady = false;
 			UE_LOG(LogTemp, Log, TEXT("Generation material parent recompiled - regenerating planet"));
 			bIsRegenerating = true;
 			RegeneratePlanet();
@@ -583,6 +600,51 @@ void APlanetSpawner::OnMaterialCompilationFinished(UMaterialInterface* Material)
 			break;
 		}
 	}
+}
+
+void APlanetSpawner::HandleGenerationMaterialChanged()
+{
+	SetActorTickEnabled(false);
+	bRegenerateWhenMaterialReady = false;
+	bIsLoading = true;
+	ClearComponents();
+
+	if (!PlanetData || !PlanetData->GenerationMaterial)
+	{
+		return;
+	}
+
+	UMaterialInterface* GenMaterial = PlanetData->GenerationMaterial;
+	UMaterial* BaseMaterial = GenMaterial->GetMaterial();
+	if (!BaseMaterial)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetSpawner: GenerationMaterial has no base material."));
+		return;
+	}
+
+	if (!HasLidarPointCloudUsage(GenMaterial))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("PlanetSpawner: GenerationMaterial '%s' is missing Used with Lidar Point Cloud. Planet generation is paused."),
+			*GetNameSafe(GenMaterial));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 12.0f, FColor::Red, TEXT("Generation Material must have Used with Lidar Point Cloud enabled."));
+		}
+		return;
+	}
+
+	if (BaseMaterial->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel))
+	{
+		UE_LOG(LogTemp, Log, TEXT("PlanetSpawner: GenerationMaterial '%s' is compiling; regeneration will resume when it finishes."),
+			*GetNameSafe(GenMaterial));
+		bRegenerateWhenMaterialReady = true;
+		SetActorTickEnabled(true);
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("PlanetSpawner: GenerationMaterial switched to '%s' - regenerating planet."),
+		*GetNameSafe(GenMaterial));
+	RegeneratePlanet();
 }
 
 #endif
@@ -665,6 +727,17 @@ bool APlanetSpawner::ShouldTickIfViewportsOnly() const
 // Called every frame
 void APlanetSpawner::Tick(float DeltaTime)
 {
+	if (bRegenerateWhenMaterialReady)
+	{
+		if (IsGenerationMaterialReady())
+		{
+			RegeneratePlanet();
+		}
+
+		Super::Tick(DeltaTime);
+		return;
+	}
+
 	BuildPlanet();
 	FChunkTree::CompletionsThisFrame = 0;
 
@@ -739,6 +812,11 @@ bool APlanetSpawner::SafetyCheck()
 		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("No Generation Material assigned in Planet Data! Please assign a Generation Material with 'Used with Lidar Point Cloud' enabled.")));
 		return false;
 	}
+	else if (!HasLidarPointCloudUsage(PlanetData->GenerationMaterial))
+	{
+		GEngine->AddOnScreenDebugMessage(-1, DisplayTime, FColor::Red, FString::Printf(TEXT("Generation Material is missing 'Used with Lidar Point Cloud'. Enable it on the material before using it for planet generation.")));
+		return false;
+	}
 	else if (PlanetData->bGenerateWater == true && (CloseWaterMesh == nullptr || FarWaterMesh == nullptr))
 	{
 		//print error on screen
@@ -809,6 +887,11 @@ AActor* APlanetSpawner::GetFoliageActor()
 
 void APlanetSpawner::BuildPlanet()
 {
+	if (!IsGenerationMaterialReady())
+	{
+		return;
+	}
+
 	if (UGameplayStatics::GetGlobalTimeDilation(GetWorld()) == 1 || GetWorld()->WorldType == EWorldType::Editor)
 	{
 		FVector PlayerViewLocation = FVector::ZeroVector;

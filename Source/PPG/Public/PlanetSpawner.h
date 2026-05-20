@@ -78,6 +78,9 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	void RegeneratePlanet();
+
+	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
+	bool IsGenerationMaterialReady() const;
 	
 	UFUNCTION(BlueprintCallable, Category = "Planet|Spawning")
 	float GetCurrentFOV();
@@ -103,6 +106,7 @@ protected:
 	void OnEndPIE(const bool bIsSimulating);
 	void OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& Event);
 	void OnMaterialCompilationFinished(UMaterialInterface* Material);
+	void HandleGenerationMaterialChanged();
 	
 	FDelegateHandle PreBeginPIEDelegateHandle;
 	FDelegateHandle EndPIEDelegateHandle;
@@ -180,6 +184,7 @@ public:
 	FVector ViewLocation;
 	bool bIsLoading = true;
 	bool bIsRegenerating = false;
+	bool bRegenerateWhenMaterialReady = false;
 
 private:
 	FChunkTree ChunkTree1, ChunkTree2, ChunkTree3, ChunkTree4, ChunkTree5, ChunkTree6;
